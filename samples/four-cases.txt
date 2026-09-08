@@ -1,0 +1,101 @@
+
+================================================================================================
+CASE 1  A fact corroborated across documents, expressed differently
+================================================================================================
+  Two witnesses reporting the same figure in different notation and scale. Normalising both to
+  a canonical dimension is what makes them comparable at all.
+
+  lemma  : Total income
+  rule   : UNIT_SCALE   verdict: corroborates
+
+  reading A  85,942.34 ₹ Million   [FY24]
+             Annual Report 2023-24  published None  p.36
+             “Total income increased by 14.13% to ₹85,942.34 million for FY24 from ₹75,302.49 million for FY23.”
+
+  reading B  8,594 ₹ Cr   [FY24]
+             Earnings Presentation Q4 & FY24  published 2024-05-17  p.17
+             “Total income | 1,934 | 2,325 | 2,195 | (5.6%) | 13.5% | | 7,530 | 8,594 | 14.1%”
+
+  reasoning:
+    The same figure written two ways: 85,942.34 ₹ Million in Annual Report 2023-24 (undated)
+    and 8,594 ₹ Cr in Earnings Presentation Q4 & FY24 (2024-05-17) both normalise to
+    85,942,340,000 INR.
+
+  inspect: http://127.0.0.1:8000/verdict/85   evidence: /evidence/366.png , /evidence/562.png
+
+================================================================================================
+CASE 2  A genuine or likely contradiction
+================================================================================================
+  Same entity, measure, period, basis and unit dimension - and different numbers, with nothing
+  in either frame to account for the gap.
+
+  lemma  : Increase/(Decrease) in the average salaries of employees other than managerial personnel
+  rule   : CONTRADICTS   verdict: contradicts
+
+  reading A  14 per cent   [FY24]
+             Annual Report 2023-24  published None  p.34
+             “Increase/(Decrease) in the average salaries of employees other than managerial personnel in the FY24 was 14%.”
+
+  reading B  (6.97) per cent   [FY24]
+             Annual Report 2023-24  published None  p.34
+             “Increase/(Decrease) in the average salaries of managerial personnel in FY24 was (6.97)%.”
+
+  reasoning:
+    Same entity, measure, period (FY24) and basis, but Annual Report 2023-24 (undated)
+    reports 14 per cent and Annual Report 2023-24 (undated) reports (6.97) per cent - a
+    149.8% difference with nothing in either frame to account for it.
+
+  escalated -> model says distinct (MANAGERIAL_VS_NON_MANAGERIAL):
+    Reading A measures the change in average salaries for employees other than managerial
+    personnel (14%), whereas Reading B specifically measures managerial personnel ((6.97)%).
+    These represent two distinct employee populations.
+
+  inspect: http://127.0.0.1:8000/verdict/101   evidence: /evidence/364.png , /evidence/365.png
+
+================================================================================================
+CASE 3  An apparent contradiction explained by context
+================================================================================================
+  The values differ, but so does one coordinate of the frame - the period, the reporting
+  basis, or the stage of revision. That coordinate IS the explanation.
+
+  lemma  : Revenue from Operations (Standalone)
+  rule   : BASIS_MISMATCH   verdict: reconciled
+
+  reading A  74,540.82 ₹ Million   [FY24]
+             Annual Report 2023-24  published None  p.22
+             “Revenue from Operations 74,540.82 66,586.61 81,415.38 72,253.01”
+
+  reading B  81,415.38 ₹ Million   [FY24]
+             Annual Report 2023-24  published None  p.22
+             “Revenue from Operations 74,540.82 66,586.61 81,415.38 72,253.01”
+
+  reasoning:
+    Different reporting basis: standalone against consolidated. These are different figures
+    by construction, not competing measurements of one figure.
+
+  inspect: http://127.0.0.1:8000/verdict/8   evidence: /evidence/336.png , /evidence/338.png
+
+================================================================================================
+CASE 4  An extraction or reasoning failure, and how it was handled
+================================================================================================
+  Every claim must be found again in the page it came from before it is admitted. These failed
+  and were kept rather than deleted.
+
+  admitted    581
+  rejected    47   (7.5% of proposals)
+    unanchored             40
+    value_not_in_quote     6
+    passage_failed         1
+
+  Pages carrying almost no extractable text (numbers locked in chart graphics):
+    Earnings Presentation Q4 & FY24                          24/27 pages
+    Annual Report 2023-24                                    16/100 pages
+    PROSPECTUS                                               8/100 pages
+  Nothing was extracted from those pages and nothing was invented for them. The gap is
+  reported at /quarantine instead of being silent. The fix is a vision pass over flagged pages
+  - one model call each, which did not fit the free-tier budget.
+
+  Example rejections:
+    [passage_failed] {"error": "elicit: model call failed after 4 attempts: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, pl
+    [unanchored] {"claim_type": "quantity", "quote": "Total borrowings# 3,707.81", "page": 5, "entity": "our Company", "measure": "Total borrowings", "value": "3,707.8
+

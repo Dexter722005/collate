@@ -153,6 +153,14 @@ def r_period_disjoint(a: Side, b: Side) -> Ruling | None:
 
 
 def r_period_nested(a: Side, b: Side) -> Ruling | None:
+    # Identical periods are not nested, whatever set theory says. contains() is
+    # inclusive on both ends, so an equal pair satisfies it and this rule was
+    # claiming every same-period comparison before r_agreement could see it -
+    # 92 spurious PERIOD_NESTED verdicts and not one corroboration in the whole
+    # corpus. The cascade's power is that the first match wins, which is exactly
+    # what makes a rule that matches too eagerly so quiet a failure.
+    if a.period == b.period:
+        return None
     if a.period.contains(b.period) or b.period.contains(a.period):
         inner, outer = (b, a) if a.period.contains(b.period) else (a, b)
         return Ruling(
@@ -234,6 +242,41 @@ def r_agreement(a: Side, b: Side) -> Ruling | None:
         "corroborates",
         "EXACT",
         f"Identical: both report {a.value_raw} {a.unit_raw or ''}".strip() + ".",
+        divergence=0.0,
+    )
+
+
+def r_sign_convention(a: Side, b: Side) -> Ruling | None:
+    """Same magnitude, opposite sign.
+
+    Financial statements write a loss as "(2,491.86)" in a table and as
+    "decreased to Rs 2,491.86 million" in the prose two pages later. Both mean
+    the same thing; only one carries the sign. Without this rule the pair looks
+    like a 200% disagreement, which is the most confident kind of wrong - the
+    system reporting a contradiction between a document and itself over a
+    typographic convention.
+
+    Deliberately narrow: magnitudes must match to rounding, and one side must
+    actually be parenthesised in its raw form. It reconciles rather than
+    corroborates, because which sign is intended is a real ambiguity the
+    document has left open.
+    """
+    if a.value is None or b.value is None or a.value == 0 or b.value == 0:
+        return None
+    if (a.value > 0) == (b.value > 0):
+        return None
+    if relative_gap(abs(a.value), abs(b.value)) > ROUNDING_TOLERANCE:
+        return None
+    parenthesised = [s for s in (a, b) if "(" in (s.value_raw or "")]
+    if not parenthesised:
+        return None
+    return Ruling(
+        "reconciled",
+        "SIGN_CONVENTION",
+        f"Identical magnitude reported with opposite signs: {a.value_raw} in {a.where()} "
+        f"against {b.value_raw} in {b.where()}. One follows the accounting convention of "
+        f"parenthesising a negative, the other states the magnitude in prose. Not a "
+        f"disagreement about the number.",
         divergence=0.0,
     )
 
@@ -346,6 +389,7 @@ CASCADE = [
     r_basis_consolidation,
     r_basis_adjustment,
     r_agreement,
+    r_sign_convention,
     r_vintage_revision,
     r_contradiction,
 ]

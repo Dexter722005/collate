@@ -56,6 +56,25 @@ def _flatten(text: str) -> tuple[str, list[int]]:
     return "".join(out), idx
 
 
+def _flat_page(page) -> tuple[str, list[int]]:
+    """Flattened page text, computed once per page rather than once per claim.
+
+    A passage yields on the order of a dozen claims and each was re-flattening
+    every candidate page from scratch - quadratic work over the same few
+    thousand characters, on the thread that all the model workers were queued
+    behind. Cached on the page object, which lives exactly as long as the
+    ingest that needs it.
+    """
+    cached = getattr(page, "_flat", None)
+    if cached is None:
+        cached = _flatten(page.text)
+        try:
+            page._flat = cached
+        except AttributeError:  # a page type that forbids attributes; recompute
+            pass
+    return cached
+
+
 def _bbox_for(page, start: int, end: int) -> tuple[float, float, float, float]:
     """Union of every block the span touches. Block-level rather than glyph-level
     because a highlight that is slightly generous reads fine, whereas one that is
@@ -90,7 +109,7 @@ def locate(quote: str, pages: list, hint_page: int | None = None) -> Anchor | No
             return Anchor(page.page_no, at, at + len(quote), _bbox_for(page, at, at + len(quote)), "exact")
 
     for page in ordered:
-        flat_page, back = _flatten(page.text)
+        flat_page, back = _flat_page(page)
         at = flat_page.find(flat_quote)
         if at >= 0:
             start = back[at]
@@ -100,7 +119,7 @@ def locate(quote: str, pages: list, hint_page: int | None = None) -> Anchor | No
     # Pass 3: fuzzy, windowed so a long page cannot drown a short quote.
     best: tuple[float, object, int, int] | None = None
     for page in ordered:
-        flat_page, back = _flatten(page.text)
+        flat_page, back = _flat_page(page)
         if len(flat_page) < len(flat_quote):
             continue
         m = fuzz.partial_ratio_alignment(flat_quote, flat_page, score_cutoff=FUZZY_FLOOR)
@@ -111,7 +130,7 @@ def locate(quote: str, pages: list, hint_page: int | None = None) -> Anchor | No
 
     if best:
         _, page, a, b = best
-        flat_page, back = _flatten(page.text)
+        flat_page, back = _flat_page(page)
         start = back[min(a, len(back) - 1)]
         end = back[min(b, len(back)) - 1] + 1
         return Anchor(page.page_no, start, end, _bbox_for(page, start, end), "fuzzy")

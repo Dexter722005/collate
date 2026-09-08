@@ -9,13 +9,15 @@ a free tier rather than a billed one:
     with a one-token request and take the first that actually answers. It also
     means this still runs in six months when today's names are gone.
 
-*   Every call is cached on disk by content hash. A re-ingest, a re-run while
-    tuning prompts, a demo recorded three times - all free. This is what makes
-    a 600-page corpus tractable inside 1,500 requests/day.
+*   Every call is cached on disk by content hash, and the model is deliberately
+    NOT part of that key. A re-ingest, a prompt tweak, a demo recorded three
+    times - all free.
 
-*   Requests-per-minute is the binding constraint, not tokens-per-minute
-    (15 RPM against 1M TPM). That asymmetry is why the segmenter batches whole
-    pages: we would rather send 200 fat requests than 2,000 thin ones.
+*   Requests are the scarce resource by a very wide margin. Every published
+    source says the free tier allows 1,500 requests/day; the API actually
+    enforces 20 per day, per model, against a million-token context. So the
+    segmenter sends a handful of very large passages rather than hundreds of
+    small ones, and this client rotates models as each allowance runs out.
 """
 
 from __future__ import annotations
@@ -33,16 +35,23 @@ from typing import Any
 
 CACHE_DIR = Path(__file__).resolve().parent.parent / ".cache" / "llm"
 
-# Best first. Probed in order; the first that answers wins.
+# Best first. Probed in order, and rotated through as each one's daily
+# allowance runs out - see `_rotate`. Aliases like gemini-flash-latest are kept
+# near the end deliberately: they are a moving target, which is useful as a
+# backstop and unhelpful as a default.
 MODEL_PREFERENCE = [
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
     "gemini-3-flash-preview",
-    "gemini-2.5-flash",
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
-    "gemini-2.5-flash-lite",
+    "gemini-flash-latest",
+    "gemini-flash-lite-latest",
 ]
+
+_DAILY_QUOTA = re.compile(r"PerDay|RequestsPerDay", re.I)
 
 
 def load_env(path: str | Path = ".env") -> None:
@@ -104,7 +113,14 @@ class Gemini:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.limiter = RateLimiter(int(rpm or os.environ.get("COLLATE_RPM", 15)))
         self._lock = threading.Lock()
+        self._pending: list[tuple] = []
+        self._exhausted: set[str] = set()
+        self._rotations = 0
+        listed = self._listed()
+        self._pool = [m for m in MODEL_PREFERENCE if not listed or m in listed]
         self.model = model or os.environ.get("COLLATE_MODEL") or self._negotiate()
+        if self.model not in self._pool:
+            self._pool.insert(0, self.model)
 
     # -- model discovery ----------------------------------------------------
 
@@ -118,11 +134,43 @@ class Gemini:
         except Exception:
             return set()
 
+    def _step(self) -> str:
+        """Move to the next healthy model without retiring the current one.
+
+        For transient trouble - a 503 - where the model is fine and simply busy.
+        Distinct from _rotate, which is for a model whose daily allowance is
+        genuinely spent and which must not be tried again this session.
+        """
+        with self._lock:
+            healthy = [m for m in self._pool if m not in self._exhausted]
+            if len(healthy) > 1:
+                i = healthy.index(self.model) if self.model in healthy else -1
+                self.model = healthy[(i + 1) % len(healthy)]
+            return self.model
+
+    def _rotate(self) -> bool:
+        """Retire the current model for this session and move to the next.
+
+        Called when a model reports its per-day allowance gone. Returns False
+        once the pool is empty, at which point the caller should surface the
+        failure rather than spin. Thread-safe because a dozen workers will all
+        discover the exhaustion within the same second and must not each burn a
+        different model doing so.
+        """
+        with self._lock:
+            if self.model not in self._exhausted:
+                self._exhausted.add(self.model)
+                self._rotations += 1
+            for name in self._pool:
+                if name not in self._exhausted:
+                    if name != self.model:
+                        self.model = name
+                    return True
+            return False
+
     def _negotiate(self) -> str:
         """Pick a model this key can genuinely call, not merely see."""
-        listed = self._listed()
-        candidates = [m for m in MODEL_PREFERENCE if not listed or m in listed]
-        for name in candidates:
+        for name in self._pool:
             try:
                 self.limiter.acquire()
                 self.client.models.generate_content(
@@ -134,8 +182,7 @@ class Gemini:
             except Exception:
                 continue
         raise ModelUnavailable(
-            "No model from the preference list answered. Listed for this key: "
-            + (", ".join(sorted(listed)[:12]) or "(none)")
+            "No model in the pool answered. Tried: " + (", ".join(self._pool) or "(none)")
         )
 
     # -- calling ------------------------------------------------------------
@@ -144,13 +191,18 @@ class Gemini:
         return self.cache_dir / f"{key}.json"
 
     def _log(self, purpose: str, cache_hit: bool, key: str, resp: Any, ms: int) -> None:
-        if self.conn is None:
-            return
+        """Buffer call telemetry in memory; the caller flushes it.
+
+        This used to INSERT and commit inline. Every thread shares one sqlite
+        connection, so each worker's commit had to queue behind whatever bulk
+        inserting the main thread was doing - and measured throughput collapsed
+        to zero calls per minute while claims kept landing. The workers were not
+        waiting on the API at all, they were waiting on the database, to write a
+        statistics row.
+        """
         usage = getattr(resp, "usage_metadata", None)
         with self._lock:
-            self.conn.execute(
-                "INSERT INTO llm_call (purpose, model, cache_hit, prompt_key, in_tokens,"
-                " out_tokens, latency_ms) VALUES (?,?,?,?,?,?,?)",
+            self._pending.append(
                 (
                     purpose,
                     self.model,
@@ -159,9 +211,23 @@ class Gemini:
                     getattr(usage, "prompt_token_count", None) if usage else None,
                     getattr(usage, "candidates_token_count", None) if usage else None,
                     ms,
-                ),
+                )
+            )
+
+    def flush_log(self) -> int:
+        """Write buffered telemetry. Called from the owning thread, never a worker."""
+        if self.conn is None:
+            return 0
+        with self._lock:
+            rows, self._pending = self._pending, []
+        if rows:
+            self.conn.executemany(
+                "INSERT INTO llm_call (purpose, model, cache_hit, prompt_key, in_tokens,"
+                " out_tokens, latency_ms) VALUES (?,?,?,?,?,?,?)",
+                rows,
             )
             self.conn.commit()
+        return len(rows)
 
     def json(
         self,
@@ -188,8 +254,15 @@ class Gemini:
             schema_repr = json.dumps(schema.model_json_schema(), sort_keys=True)
         else:
             schema_repr = json.dumps(schema, sort_keys=True, default=str)
+
+        # Note what is NOT in the key: the model. A cache entry means "this
+        # passage, read under this prompt, into this schema" - and because the
+        # daily allowance is per-model, a long ingest rotates through several.
+        # Keying on the model would throw away most of the cache exactly when a
+        # rerun matters most. Which model produced a given answer is recorded in
+        # llm_call; this is a deliberate trade of provenance for reuse.
         key = hashlib.sha256(
-            "\x00".join([self.model, purpose, system, user, schema_repr]).encode("utf-8")
+            "\x00".join([purpose, system, user, schema_repr]).encode("utf-8")
         ).hexdigest()
 
         cached = self._cache_path(key)
@@ -226,12 +299,33 @@ class Gemini:
                 return payload
             except Exception as exc:  # noqa: BLE001 - retried below, surfaced at the end
                 last = exc
-                msg = str(exc).lower()
-                fatal = "api key" in msg or "permission" in msg
-                if fatal or attempt == max_attempts - 1:
+                msg = str(exc)
+                low = msg.lower()
+                if "api key" in low or "permission" in low:
                     break
-                # 429s carry a retry hint often enough to be worth honouring.
-                hinted = re.search(r"retry.{0,12}?(\d+(?:\.\d+)?)\s*s", msg)
+
+                # A daily-allowance 429 is not worth waiting out - it clears at
+                # midnight Pacific, not in thirty seconds. Retire the model for
+                # this session and carry on with the next one.
+                if "429" in msg and _DAILY_QUOTA.search(msg):
+                    if self._rotate():
+                        continue
+                    break
+
+                # 503 means that model is busy, not that we are out of budget.
+                # Backing off on the same name just waits for someone else's
+                # traffic to subside; stepping sideways to a peer usually costs
+                # nothing. Five passages of the prospectus were lost to this
+                # before the sideways step existed.
+                if "503" in msg or "unavailable" in low or "overloaded" in low:
+                    self._step()
+                    time.sleep(1.5 + random.uniform(0, 1.5))
+                    continue
+
+                if attempt == max_attempts - 1:
+                    break
+                # Per-minute 429s do carry an honest retry hint. Honour it.
+                hinted = re.search(r"retry.{0,12}?(\d+(?:\.\d+)?)\s*s", low)
                 delay = float(hinted.group(1)) if hinted else (2.0 ** attempt) * 2.0
                 time.sleep(min(delay, 45.0) + random.uniform(0, 1.0))
         raise RuntimeError(f"{purpose}: model call failed after {max_attempts} attempts: {last}")

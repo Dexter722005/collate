@@ -47,6 +47,27 @@ BASIS_RE = re.compile(
 # physical index. Checked only at the top and bottom margins.
 PAGE_LABEL_RE = re.compile(r"^\s*(?:page\s+)?([0-9]{1,4}|[ivxlcdm]{1,7})\s*$", re.IGNORECASE)
 
+# Sized against the real quota, which is not the published one. Gemini's free
+# tier is documented everywhere as 1,500 requests/day; the API actually enforces
+# GenerateRequestsPerDayPerProjectPerModel-FreeTier = 20 requests/day/model.
+# Two orders of magnitude out, and it inverts the batching arithmetic: with 20
+# requests to spend, a 100-page document has to fit in about four of them.
+#
+# What makes that survivable is that the constraint is on REQUESTS and the
+# context window is a million tokens. So passages went from 4 pages to ~25, and
+# the corpus from ~210 requests to ~30. More context per call also means fewer
+# tables split across a boundary, so as in the earlier sizing decision, the
+# quota constraint and the extraction-quality argument point the same way.
+# ...and then measured, which reversed the decision. At 25 pages the model stops
+# enumerating and starts summarising: the earnings deck went from 84 claims to
+# 2, and one document lost every passage to 503s with no partial credit. Recall
+# collapsed long before the context window did.
+#
+# So the sizing is back where it started, and the quota is absorbed elsewhere -
+# by rotating models (nine of them, 20/day each) and by a disk cache that does
+# not key on the model. The honest summary is that the free tier does not fit a
+# 600-page corpus in one day, and the fix is to spend the budget on the corpus
+# that has to be dense rather than to thin out every document equally.
 MAX_PASSAGE_CHARS = 24_000
 MAX_PASSAGE_PAGES = 4
 SPARSE_DENSITY = 0.0035  # chars per pt^2; tuned against the slide deck

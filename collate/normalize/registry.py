@@ -27,8 +27,28 @@ import threading
 import numpy as np
 from rapidfuzz import fuzz
 
-MERGE = 0.86
-NEIGHBOUR = 0.72
+# Calibrated against real pairs from the corpus rather than picked by feel.
+# Measured cosines, MiniLM:
+#
+#   0.905  "Total income (I)"            / "Total income"                merge
+#   0.874  "Revenues from express ..."   / "Express Parcel revenue"      merge
+#   0.830  "Revenue from contract ..."   / "Revenues from customers"     merge
+#   0.808  "Revenue from Operations (Consolidated)" / "(Standalone)"     merge*
+#   ---------------------------------------------------------------- 0.80
+#   0.738  "EBITDA"                      / "Adjusted EBITDA"             keep apart
+#   0.601  "Total income (I)"            / "Total expenses (II)"         keep apart
+#   0.541  "Loss for the year"           / "Profit for the year"         keep apart
+#   0.469  "Revenue from operations"     / "Total income"                keep apart
+#
+# * correct only because the basis qualifier is stripped out of the measure
+#   first - see split_qualifiers below. Consolidated and standalone revenue are
+#   one measure on two bases, not two measures.
+#
+# At the old 0.86 the registry fragmented into 319 measures over 581 claims and
+# only nine lemmas reached across two witnesses, so there was almost nothing to
+# adjudicate. The gap between 0.738 and 0.808 is wide enough to sit in.
+MERGE = 0.80
+NEIGHBOUR = 0.68
 
 _MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 _model = None
@@ -64,6 +84,93 @@ def embed(texts: list[str]) -> np.ndarray:
     return np.asarray(vecs, dtype=np.float32)
 
 
+_NOTE_MARKER = re.compile(r"\s*[\(\[]\s*(?:[ivxlcdm]{1,5}|\d{1,2}|[a-z])\s*[\)\]]\s*$", re.I)
+_PARENTHETICAL = re.compile(r"[\(\[]([^)\]]{2,40})[\)\]]")
+# Qualifier words that belong in the frame's basis, not in the measure's name.
+_BASIS_WORDS = re.compile(
+    r"^\s*(consolidated|standalone|separate|audited|unaudited|restated|revised|"
+    r"provisional|estimated|net|gross|nominal|real|annualised|annualized|"
+    r"seasonally\s+adjusted|per\s+capita|excluding[^)]*|including[^)]*)\s*$",
+    re.I,
+)
+
+
+def split_qualifiers(phrase: str) -> tuple[str, list[str]]:
+    """Separate a measure's name from qualifiers wedged into it.
+
+    Documents write "Revenue from Operations (Consolidated)" as one label, but
+    that is one measure on one basis, not a measure of its own. Leaving the
+    qualifier in the name fragments the registry AND hides the difference from
+    the basis rules, so BASIS_MISMATCH can never fire on it. Pulling it out
+    fixes both at once.
+
+    Also strips bare note markers - the "(I)" in "Total income (I)" is a
+    reference into the statement's own numbering, not a qualifier.
+    """
+    text = " ".join(str(phrase or "").split())
+    extracted: list[str] = []
+
+    for inner in _PARENTHETICAL.findall(text):
+        if _BASIS_WORDS.match(inner):
+            extracted.append(inner.strip().lower())
+            text = text.replace(f"({inner})", " ").replace(f"[{inner}]", " ")
+
+    text = " ".join(text.split())
+    while True:
+        stripped = _NOTE_MARKER.sub("", text)
+        if stripped == text:
+            break
+        text = stripped
+
+    return (text.strip(" -–—:,") or phrase), extracted
+
+
+_STOPWORDS = {
+    "the", "a", "an", "of", "for", "from", "in", "on", "at", "to", "and", "or",
+    "by", "with", "as", "is", "are", "s", "total",
+}
+
+
+def _stem(word: str) -> str:
+    """Crudest possible stemmer: plurals only. Enough to see that 'revenues from
+    customers' and 'revenue from customers' are one phrase, and not so clever
+    that it starts equating things it should not."""
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"
+    # Strip a trailing plural 's' only. An "es" rule looks tidier and is worse:
+    # it turns "revenues" into "revenu", which then fails to match "revenue"
+    # and reports the two as a substitution.
+    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
+
+
+def content_key(phrase: str) -> frozenset[str]:
+    words = re.findall(r"[a-z0-9]+", str(phrase or "").lower())
+    return frozenset(_stem(w) for w in words if w not in _STOPWORDS and len(w) > 1)
+
+
+def substitutes(a: str, b: str) -> bool:
+    """Do these two phrases swap one word for another, rather than elaborate?
+
+    "net cash from FINANCING activities" and "net cash from OPERATING
+    activities" each carry a content word the other lacks. That is substitution,
+    and substitution means two different measures however closely they embed -
+    these two score well above any workable threshold, and merging them invented
+    a 177% contradiction between a cash-flow line and a different cash-flow line.
+
+    Contrast elaboration, where one phrase's words are a subset of the other's
+    ("revenue from customers" inside "revenue from contracts with customers").
+    That is usually the same measure named at two levels of detail, and is left
+    to the embedding to judge.
+
+    Purely structural, so it carries no domain knowledge: it would separate
+    "left ventricular volume" from "right ventricular volume" just as happily.
+    """
+    ka, kb = content_key(a), content_key(b)
+    return bool(ka - kb) and bool(kb - ka)
+
+
 def slugify(text: str, maxlen: int = 60) -> str:
     s = re.sub(r"[^a-z0-9]+", "_", str(text).lower()).strip("_")
     return (s[:maxlen] or "unnamed")
@@ -93,6 +200,10 @@ class MeasureIndex:
             if rows
             else None
         )
+        self.labels: dict[int, str] = {
+            r["id"]: r["canonical_label"]
+            for r in conn.execute("SELECT id, canonical_label FROM measure").fetchall()
+        }
         self.aliases: dict[str, int] = {
             r["phrase"]: r["measure_id"]
             for r in conn.execute("SELECT phrase, measure_id FROM measure_alias").fetchall()
@@ -120,13 +231,28 @@ class MeasureIndex:
         if vec is None:
             vec = embed([phrase])[0]
 
+        # Rank by embedding, but let the strongest candidate that is not a
+        # substitution win - the nearest neighbour is sometimes precisely the
+        # phrase that swaps one word for another.
         best_id, best_score = None, 0.0
         if self.mat is not None and self.ids:
             sims = self.mat @ vec
-            j = int(np.argmax(sims))
-            best_id, best_score = self.ids[j], float(sims[j])
+            for j in np.argsort(-sims)[:8]:
+                cand_id = self.ids[int(j)]
+                if substitutes(phrase, self.labels.get(cand_id, "")):
+                    continue
+                best_id, best_score = cand_id, float(sims[int(j)])
+                break
 
-        if best_id is not None and best_score >= MERGE:
+        # Identical content words are a merge on their own account: "Revenues
+        # from customers" and "Revenue from customers" need no model to tell
+        # them apart, and requiring the threshold as well would split them.
+        exact_words = (
+            best_id is not None
+            and content_key(phrase) == content_key(self.labels.get(best_id, ""))
+        )
+
+        if best_id is not None and (best_score >= MERGE or exact_words):
             self.conn.execute(
                 "INSERT OR IGNORE INTO measure_alias (measure_id, phrase, similarity)"
                 " VALUES (?,?,?)",
@@ -154,6 +280,7 @@ class MeasureIndex:
             (mid, key),
         )
         self.aliases[key] = mid
+        self.labels[mid] = phrase
         self._append(mid, vec)
         return mid
 

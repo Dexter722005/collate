@@ -187,6 +187,7 @@ def elicit_witness(
                 _persist(conn, witness_id, pid, rc, loc)
                 stats.anchored += 1
 
+    client.flush_log()
     conn.commit()
     stats.by_reason = reasons
     return stats

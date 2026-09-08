@@ -173,6 +173,68 @@ data; that endpoint is the data. It is also the cheapest possible defence
 against the thing reviewers are right to suspect, which is that the numbers were
 made up somewhere in the middle.
 
+### 13 — The documented free tier does not exist · 8 Sep
+
+Decision 4 was sized against 15 requests/minute and 1,500 requests/day. That
+number is in Google's own docs and in every blog post about the free tier. It is
+not what the API enforces. The 429 body says:
+
+```
+quotaId:    GenerateRequestsPerDayPerProjectPerModel-FreeTier
+quotaValue: 20
+```
+
+**Twenty requests per day, per model.** Two orders of magnitude below the
+published figure, and I only found it because I read a full error body instead
+of the first line. Separately, `gemini-2.5-flash` and `-lite` now return 404 —
+retired outright — so a hard-coded model name would have been dead on arrival.
+Decision 5 paid for itself.
+
+Three responses, all of them in the code:
+
+1. **Rotate models.** The allowance is *per model* and nine flash-family models
+   are reachable, so `_rotate()` retires a model on a daily-quota 429 and moves
+   on. `_step()` is the separate, gentler move for a 503, where the model is
+   fine and merely busy.
+2. **Stop keying the cache on the model.** A cache entry means "this passage,
+   under this prompt, into this schema". Since a long ingest now rotates through
+   several models, keying on the model would discard most of the cache exactly
+   when a rerun matters most. Provenance is kept in `llm_call` instead.
+3. **Spend the budget where density is needed** rather than thinning every
+   document equally — see below.
+
+### 14 — Wrong turn: making passages bigger, which broke everything · 8 Sep
+
+The obvious response to "20 requests/day" was to use the million-token context:
+25-page passages, ~30 requests for the whole corpus. I wrote that, argued for it
+in a comment, and it was wrong.
+
+Measured, against 4-page passages:
+
+| | 4 pages | 25 pages |
+| --- | --- | --- |
+| earnings deck | **84 claims** | **2 claims** |
+| anchor rate (annual report) | 82% | 73% |
+| prospectus | — | 0 claims, every passage lost to a 503 |
+| verdicts across corpus | — | **8, none of them contradictions** |
+
+Recall collapsed long before the context window did. Given 25 pages the model
+stops enumerating and starts summarising — no instruction in the prompt was
+enough to prevent that. And a failed 25-page passage loses 25 pages, where a
+failed 4-page passage loses four; large batches have no partial credit.
+
+The 8-verdict result is the one that settles it. Cross-document comparison needs
+*density*: with 175 claims spread across 101 measures, almost no lemma had
+readings from two different witnesses, so there was nothing to adjudicate. The
+system was working perfectly and had nothing to work on.
+
+So sizing went back to 4 pages, and the quota is absorbed by rotation and cache
+instead. The honest conclusion is that the free tier does not fit six 100-page
+documents in one day, and the right response is to spend the budget on the
+corpus that needs to be dense — the three Delhivery documents, which share an
+entity across three vintages and therefore actually produce collisions — rather
+than to extract every document too thinly to compare.
+
 ---
 
 ## Still wrong, or not done

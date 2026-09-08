@@ -72,8 +72,15 @@ def build_pairs(conn) -> list[tuple]:
         for a, b in combinations(claims, 2):
             if picked >= MAX_PAIRS_PER_LEMMA:
                 break
+            # Within one document, compare only readings that cover the same
+            # period. Identical frames catch internal inconsistency; differing
+            # frames over the same period catch the interesting case, which is a
+            # filing that reports both consolidated and standalone and expects
+            # you to know which you are looking at. Comparing a document's FY22
+            # column against its own FY24 column, by contrast, would manufacture
+            # thousands of PERIOD_DISJOINT verdicts nobody asked for.
             same_witness = a["witness_id"] == b["witness_id"]
-            if same_witness and a["frame_key"] != b["frame_key"]:
+            if same_witness and a["period_start"] != b["period_start"]:
                 continue
             pairs.append(
                 (lemma, Side.build(a, witnesses.get(a["witness_id"])),

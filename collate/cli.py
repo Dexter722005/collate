@@ -5,6 +5,7 @@
     python -m collate frame                         resolve frames for new claims
     python -m collate adjudicate                    run the cascade
     python -m collate stats                         what is in the apparatus
+    python -m collate cases                         the four required cases, found live
     python -m collate reset                         start over
 
 build is incremental: documents already in the corpus by content hash are
@@ -19,7 +20,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import collation, db, llm, normalize, pipeline
+from . import cases, collation, db, llm, normalize, pipeline
 
 
 def _client(conn):
@@ -133,6 +134,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-escalate", action="store_true", help="rules only, no model calls")
     p.set_defaults(fn=cmd_adjudicate)
     p = sub.add_parser("stats"); p.set_defaults(fn=cmd_stats)
+    p = sub.add_parser("cases", help="the four required cases, found in the data")
+    p.set_defaults(fn=lambda a, c: cases.run(c))
     p = sub.add_parser("build")
     p.add_argument("paths", nargs="+")
     p.add_argument("--no-escalate", action="store_true")

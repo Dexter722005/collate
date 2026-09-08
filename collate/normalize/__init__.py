@@ -143,11 +143,17 @@ def normalize_claim(
     )
     dimension = qty.dimension if qty else None
 
+    # A qualifier written into the measure's name ("Revenue from Operations
+    # (Consolidated)") is a basis, and has to be moved before the measure is
+    # resolved - otherwise it both splits the registry and hides itself from
+    # the basis rules.
+    measure_clean, inline_basis = registry.split_qualifiers(claim.get("measure_raw") or "")
+
     idx = index or registry.MeasureIndex(conn)
-    measure_id = idx.resolve(claim.get("measure_raw") or "", dimension, witness.get("id"), vec=vec)
+    measure_id = idx.resolve(measure_clean, dimension, witness.get("id"), vec=vec)
 
     per = period_mod.parse(claim.get("period_raw"))
-    tokens = basis_tokens(claim.get("basis_raw"), qualifiers)
+    tokens = basis_tokens(claim.get("basis_raw"), list(qualifiers or []) + inline_basis)
 
     lemma_key = f"{entity_id}:{measure_id}" if entity_id and measure_id else None
     period_part = f"{per.start.isoformat()}..{per.end.isoformat()}" if per else "none"
@@ -186,12 +192,14 @@ def normalize_witness(conn, witness_id: int) -> int:
     # than per-claim is the difference between seconds and an hour on a full
     # corpus, and the model is far more efficient on a batch than on singles.
     index = registry.MeasureIndex(conn)
-    phrases = sorted({" ".join((c["measure_raw"] or "").split()) for c in claims} - {""})
+    phrases = sorted(
+        {registry.split_qualifiers(c["measure_raw"] or "")[0] for c in claims} - {""}
+    )
     vectors = dict(zip(phrases, registry.embed(phrases))) if phrases else {}
 
     framed = 0
     for row in claims:
-        phrase = " ".join((row["measure_raw"] or "").split())
+        phrase = registry.split_qualifiers(row["measure_raw"] or "")[0]
         fields = normalize_claim(
             conn, dict(row), witness, index=index, vec=vectors.get(phrase)
         )
