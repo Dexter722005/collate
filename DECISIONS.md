@@ -235,12 +235,65 @@ corpus that needs to be dense — the three Delhivery documents, which share an
 entity across three vintages and therefore actually produce collisions — rather
 than to extract every document too thinly to compare.
 
+### 15 — Substitution, not similarity · 8 Sep
+
+Recalibrating the merge threshold to 0.80 (measured against real pairs from the
+corpus, not chosen by feel) fixed a registry that had fragmented into 319
+measures over 581 claims. It also merged **"net cash from financing activities"**
+with **"net cash from operating activities"** and reported a 177% contradiction
+between two different lines of one cash-flow statement.
+
+No threshold fixes that. The two phrases are genuinely close in meaning-space;
+that is what makes them dangerous. So the guard is structural rather than
+semantic:
+
+> Two phrases that each carry a content word the other lacks are **substituting**,
+> and are different measures however closely they embed. One whose words are a
+> subset of the other's is **elaborating**, and may be the same measure named at
+> two levels of detail.
+
+`financing` / `operating`, `assets` / `liabilities`, `profit` / `loss`,
+`gross` / `net` all fall out of this without naming any of them. It carries no
+domain knowledge at all — it would separate "left ventricular volume" from
+"right ventricular volume" just as happily, which is the point, because the
+brief says the system has to work on documents nobody anticipated.
+
+The stemmer underneath it is four lines and deliberately stupid. The first
+version stripped "es", which turned "revenues" into "revenu", failed to match
+"revenue", and reported the two as a substitution.
+
+### 16 — The bug was in the segmenter, and the gate found it · 8 Sep
+
+The RBI annual report anchored at **39%** against 95-96% for the Delhivery
+filings. 587 rejected claims, and reading them was disorienting: they were
+fluent, specific, plausible sentences.
+
+> model: *"Global inflation eased to 5.7 per cent in 2024 from 6.6 per cent in 2023"*
+> page:  *"global inflation is expected to moderate from 5.7 per cent in 2024 to 4.3 per cent in 2025"*
+
+The number is real and on the page. The sentence is not. The cause was two
+columns: **80 of that document's 100 pages** are laid out in two, and sorting
+blocks by `(y, x)` interleaves them line by line, so every sentence arrived cut
+in half and spliced to an unrelated one. Given shredded input the model did the
+reasonable thing and reconstructed readable prose — which is to say it wrote
+sentences that were not in the document.
+
+Column-aware reading order took that witness from **39% → 71%** and added 419
+claims. Before re-ingesting anything I checked the change against 60 already-
+anchored quotes per document and got 60/60 on both, so the reordering was known
+not to be a regression.
+
+Two things worth keeping from this. The failure was in the *cheapest, least
+interesting* part of the pipeline, and it presented as a model-quality problem.
+And the anchoring gate never let one of those 587 sentences into the apparatus —
+its whole value is on days when something upstream is quietly broken.
+
 ---
 
 ## Still wrong, or not done
 
-- **Sparse pages are counted, not read.** 24 of 27 pages of the earnings deck
-  have numbers locked inside chart graphics. Nothing is extracted from them and
+- **Sparse pages are counted, not read.** 24 of the 27 earnings-deck pages have
+  their numbers locked inside chart graphics. Nothing is extracted from them and
   nothing is invented; they are reported on the quarantine page. The fix is a
   vision pass over flagged pages, which is a model call per page and did not fit
   the budget.
