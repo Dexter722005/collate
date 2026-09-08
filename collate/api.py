@@ -13,7 +13,6 @@ that one is the data.
 
 from __future__ import annotations
 
-import io
 import json
 import shutil
 from datetime import date
