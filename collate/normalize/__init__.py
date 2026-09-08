@@ -73,26 +73,53 @@ STAGE_ORDER = [
 _TOKEN = re.compile(r"[a-z][a-z_]{2,}")
 
 
+# Words that turn up in free-text qualifiers and mean nothing as a basis. Not a
+# domain vocabulary - just prose that survived tokenising.
+_BASIS_NOISE = {
+    "the", "and", "for", "with", "from", "that", "this", "which", "were", "was",
+    "has", "have", "been", "are", "its", "their", "there", "value", "values",
+    "figure", "figures", "number", "numbers", "data", "based", "including",
+    "percent", "cent", "year", "years", "period", "memo", "term", "total",
+    "amount", "level", "rate", "growth", "over", "under", "above", "below",
+    "assumption", "assumptions", "baseline", "projected", "medium", "ion",
+}
+_MIN_FREE_TOKEN = 5
+_MAX_FREE_TOKENS = 2
+
+
 def basis_tokens(basis_raw: str | None, qualifiers: list[str] | None) -> list[str]:
-    """Canonical qualifier tokens for a claim, sorted so the frame key is stable."""
-    blob = " ".join(filter(None, [basis_raw or ""] + list(qualifiers or []))).lower()
+    """Canonical qualifier tokens for a claim, sorted so the frame key is stable.
+
+    Canonical families are matched against the basis AND the free-text
+    qualifiers, because a document will say "restated" in either place.
+
+    Unrecognised words are only taken from `basis_raw`. `qualifiers` is where
+    the model puts whole clauses, and tokenising those was pulling "assumption",
+    "baseline", "tariffs" and even "ion" into the frame - noise that looked
+    absurd in the UI and, far worse, split frames that should have matched, so
+    two readings of one figure stopped being comparable. The vocabulary stays
+    open, but only where the document was actually naming a basis.
+    """
+    quals = list(qualifiers or [])
+    blob = " ".join(filter(None, [basis_raw or ""] + quals)).lower()
     if not blob.strip():
         return []
 
     found: set[str] = set()
-    consumed = blob
     for patterns in BASIS_FAMILIES.values():
         for pattern, token in patterns:
             if re.search(pattern, blob):
                 found.add(token)
-                consumed = re.sub(pattern, " ", consumed)
                 break
 
-    # Anything left that looks like a word is kept verbatim. This is what makes
-    # the basis vocabulary open rather than closed.
-    for extra in _TOKEN.findall(consumed):
-        if extra not in {"the", "and", "for", "with", "from", "that", "this", "which"}:
-            found.add(extra)
+    stated = (basis_raw or "").lower()
+    for pattern, _ in [pt for fam in BASIS_FAMILIES.values() for pt in fam]:
+        stated = re.sub(pattern, " ", stated)
+    free = [
+        w for w in _TOKEN.findall(stated)
+        if len(w) >= _MIN_FREE_TOKEN and w not in _BASIS_NOISE
+    ]
+    found.update(sorted(set(free))[:_MAX_FREE_TOKENS])
 
     return sorted(found)
 

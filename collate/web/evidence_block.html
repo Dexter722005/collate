@@ -1,0 +1,9 @@
+{# A single rendered source page with the anchor drawn on it, loaded on demand.
+   Lazy because these are ~250KB each and a subject can have a dozen readings. #}
+<blockquote class="quote">{{ claim.quote }}</blockquote>
+<div class="evidence-meta">
+  <span>{{ claim.witness_title|truncate(40) }}</span>
+  <span>p.{{ (claim.page_no or 0) + 1 }}{% if claim.printed_label %} (printed {{ claim.printed_label }}){% endif %}
+        &middot; {{ claim.match_kind }}</span>
+</div>
+<img class="page-shot" loading="lazy" src="/evidence/{{ claim.id }}.png" alt="source page">

@@ -1,0 +1,86 @@
+{# One subject: every reading of it, then how they relate.
+
+   Readings come first and are ordered by period, so the shape of the
+   disagreement is visible before any verdict is read. Relationships are grouped
+   by kind, with the two that carry information open and the bulk - periods that
+   simply do not overlap - folded away. A subject can carry eighty pairs; almost
+   all of them say "different year". #}
+
+<div class="lemma-head">
+  <h2>{{ measure }}</h2>
+  <div class="lemma-sub">
+    {{ readings|length }} reading{{ '' if readings|length == 1 else 's' }}
+    from {{ n_witnesses }} document{{ '' if n_witnesses == 1 else 's' }}
+    &middot; {{ n_verdicts }} comparison{{ '' if n_verdicts == 1 else 's' }}
+    {%- if collapsed %} &middot; {{ collapsed }} duplicate reading{{ '' if collapsed == 1 else 's' }} folded{% endif %}
+  </div>
+</div>
+
+<h3 class="sub">Readings</h3>
+<table class="readings-table">
+  <tr><th>period</th><th>value</th><th>basis</th><th>source</th><th></th></tr>
+  {% for r in readings %}
+  <tr>
+    <td class="rt-period">{{ r.period_raw or '—' }}</td>
+    <td class="rt-value">{{ r.value_raw }} <span class="rt-unit">{{ r.unit_raw or '' }}</span>
+      {%- if r.repeats > 1 %} <span class="rt-rep">&times;{{ r.repeats }}</span>{% endif %}</td>
+    <td class="rt-basis">{{ ', '.join(r.basis_list) or '—' }}</td>
+    <td class="rt-src">{{ r.witness_title|short }}<span class="rt-page">p.{{ (r.page_no or 0) + 1 }}</span></td>
+    <td class="rt-act">
+      {% if r.page_no is not none %}
+      <a href="#" hx-get="/evidence-block/{{ r.id }}" hx-target="#ev-{{ r.id }}" hx-swap="innerHTML">page</a>
+      {% endif %}
+    </td>
+  </tr>
+  <tr><td colspan="5" class="ev-slot"><div id="ev-{{ r.id }}"></div></td></tr>
+  {% endfor %}
+</table>
+
+<h3 class="sub">How they relate</h3>
+
+{% macro relation(v) %}
+<div class="relation">
+  <div class="relation-head">
+    <span class="rule-tag v-{{ v.verdict }}">{{ v.rule_id.lower().replace('_', ' ') }}</span>
+    {% if v.divergence is not none and v.divergence > 0 %}
+      <span class="relation-gap">{{ '%.1f'|format(v.divergence * 100) }}% apart</span>
+    {% endif %}
+  </div>
+  <div class="relation-pair">
+    <span>{{ v.a_value }} {{ v.a_unit or '' }} <em>{{ v.a_period or 'no period' }}</em></span>
+    <span class="vs">vs</span>
+    <span>{{ v.b_value }} {{ v.b_unit or '' }} <em>{{ v.b_period or 'no period' }}</em></span>
+  </div>
+  <p class="relation-why">{{ v.explanation }}</p>
+  <a class="relation-more" href="#" hx-get="/verdict/{{ v.id }}"
+     hx-target="#evidence" hx-swap="innerHTML">full reasoning and both pages &rarr;</a>
+</div>
+{% endmacro %}
+
+{% for kind in ['contradicts', 'corroborates', 'reconciled', 'distinct'] %}
+  {% set items = grouped.get(kind, []) %}
+  {% if items %}
+    {% if kind in ['contradicts', 'corroborates'] %}
+      <div class="relation-group">
+        <div class="relation-group-head v-{{ kind }}">{{ kind }} &middot; {{ items|length }}</div>
+        {% for v in items[:6] %}{{ relation(v) }}{% endfor %}
+        {% if items|length > 6 %}
+        <details class="more-relations">
+          <summary>{{ items|length - 6 }} more</summary>
+          {% for v in items[6:] %}{{ relation(v) }}{% endfor %}
+        </details>
+        {% endif %}
+      </div>
+    {% else %}
+      <details class="relation-group folded">
+        <summary class="relation-group-head v-{{ kind }}">{{ kind }} &middot; {{ items|length }}</summary>
+        {% for v in items[:20] %}{{ relation(v) }}{% endfor %}
+        {% if items|length > 20 %}
+        <p class="relation-trunc">{{ items|length - 20 }} further comparisons not shown.</p>
+        {% endif %}
+      </details>
+    {% endif %}
+  {% endif %}
+{% else %}
+<p class="placeholder">No comparisons recorded for this subject.</p>
+{% endfor %}

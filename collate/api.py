@@ -39,6 +39,29 @@ conn = db.connect()
 VERDICT_ORDER = ["contradicts", "reconciled", "corroborates", "distinct"]
 
 
+def short_label(title: str | None, filename: str = "") -> str:
+    """A witness name that fits in a table cell.
+
+    Document titles run to "INDIA 2025 ARTICLE IV CONSULTATION-PRESS RELEASE;
+    STAFF REPORT; STAFF STATEMENT; AND STATEMENT BY THE EXECUTIVE DIRECTOR FOR
+    INDIA", which wraps to six lines in a sidebar and three in a source column.
+    Cut at a word boundary rather than mid-word, and keep the head, which is
+    where the identifying words are.
+    """
+    text = " ".join((title or filename or "document").split())
+    if len(text) <= 30:
+        return text
+    out: list[str] = []
+    for word in text.replace(";", " ").replace("—", " ").split():
+        if sum(len(w) + 1 for w in out) + len(word) > 30:
+            break
+        out.append(word)
+    return " ".join(out) or text[:30]
+
+
+templates.env.filters["short"] = short_label
+
+
 def _find_pdf(filename: str) -> Path | None:
     for candidate in DATA.rglob(filename):
         return candidate
@@ -48,45 +71,75 @@ def _find_pdf(filename: str) -> Path | None:
 # -- views ------------------------------------------------------------------
 
 
-@app.get("/", response_class=HTMLResponse)
-def apparatus(request: Request, verdict: str = "contradicts", rule: str = "", q: str = ""):
-    where, args = ["1=1"], []
+# The four cases the brief asks for, surfaced as a starting point rather than
+# left for a reader to find among 704 verdicts. Each is a rule that produces a
+# genuinely different kind of finding, so this doubles as a tour of the cascade.
+HIGHLIGHTS = [
+    ("UNIT_SCALE", "Same number, written two ways",
+     "Prose in one filing, a table cell in another. No characters in common."),
+    ("BASIS_MISMATCH", "Explained by reporting basis",
+     "Standalone against consolidated - different figures by construction."),
+    ("SIGN_CONVENTION", "Explained by accounting notation",
+     "A table's (2,491.86) against the same document's prose 2,491.86."),
+    ("CONTRADICTS", "A real disagreement",
+     "Same subject, period and units; different numbers, nothing to explain it."),
+]
+
+
+def _lemma_rows(verdict: str, rule: str, q: str, limit: int = 400) -> list:
+    """Group the apparatus by lemma - the subject two readings are arguing about.
+
+    The first version of this listed verdicts, which are PAIRS. A subject with
+    four readings produces six pairs, so the same measure appeared six times and
+    read as duplication. A critical apparatus is organised by lemma, with the
+    variant readings gathered underneath; that is the whole metaphor and the
+    list should match it.
+    """
+    where, args = ["c.lemma_key IS NOT NULL"], []
     if verdict and verdict != "all":
-        where.append("v.verdict = ?")
+        where.append(
+            "EXISTS (SELECT 1 FROM verdict v WHERE v.lemma_key = c.lemma_key AND v.verdict = ?)"
+        )
         args.append(verdict)
     if rule:
-        where.append("v.rule_id = ?")
+        where.append(
+            "EXISTS (SELECT 1 FROM verdict v WHERE v.lemma_key = c.lemma_key AND v.rule_id = ?)"
+        )
         args.append(rule)
     if q:
-        where.append("(ca.measure_raw LIKE ? OR e.canonical_name LIKE ?)")
+        where.append("(c.measure_raw LIKE ? OR e.canonical_name LIKE ?)")
         args += [f"%{q}%", f"%{q}%"]
 
-    rows = db.rows(
+    return db.rows(
         conn,
         f"""
-        SELECT v.*, ca.measure_raw AS measure, e.canonical_name AS entity,
-               ca.value_raw AS a_value, ca.unit_raw AS a_unit, ca.period_raw AS a_period,
-               cb.value_raw AS b_value, cb.unit_raw AS b_unit, cb.period_raw AS b_period,
-               wa.title AS a_witness, wb.title AS b_witness,
-               wa.vintage_date AS a_vintage, wb.vintage_date AS b_vintage
-        FROM verdict v
-        JOIN claim ca ON ca.id = v.claim_a
-        JOIN claim cb ON cb.id = v.claim_b
-        JOIN witness wa ON wa.id = ca.witness_id
-        JOIN witness wb ON wb.id = cb.witness_id
-        LEFT JOIN entity e ON e.id = ca.entity_id
+        SELECT c.lemma_key,
+               MIN(c.measure_raw)          AS measure,
+               MAX(e.canonical_name)       AS entity,
+               COUNT(*)                    AS readings,
+               COUNT(DISTINCT c.witness_id) AS witnesses,
+               (SELECT COUNT(*) FROM verdict v WHERE v.lemma_key = c.lemma_key) AS verdicts,
+               (SELECT GROUP_CONCAT(DISTINCT v.verdict) FROM verdict v
+                 WHERE v.lemma_key = c.lemma_key) AS kinds
+        FROM claim c
+        LEFT JOIN entity e ON e.id = c.entity_id
         WHERE {' AND '.join(where)}
-        ORDER BY COALESCE(v.severity, 0) DESC, ABS(COALESCE(v.divergence, 0)) DESC, v.id
-        LIMIT 300
+        GROUP BY c.lemma_key
+        HAVING verdicts > 0
+        ORDER BY witnesses DESC, verdicts DESC, readings DESC
+        LIMIT ?
         """,
-        args,
+        args + [limit],
     )
 
+
+@app.get("/", response_class=HTMLResponse)
+def apparatus(request: Request, verdict: str = "all", rule: str = "", q: str = ""):
     return templates.TemplateResponse(
         "apparatus.html",
         {
             "request": request,
-            "rows": rows,
+            "lemmas": _lemma_rows(verdict, rule, q),
             "verdict": verdict,
             "rule": rule,
             "q": q,
@@ -101,6 +154,124 @@ def apparatus(request: Request, verdict: str = "contradicts", rule: str = "", q:
             ),
             "stats": _stats(),
             "order": VERDICT_ORDER,
+            "highlights": _highlights(),
+        },
+    )
+
+
+def _highlights() -> list[dict]:
+    """One representative verdict per showcase rule, preferring cross-document."""
+    out = []
+    for rule_id, title, blurb in HIGHLIGHTS:
+        row = db.one(
+            conn,
+            """SELECT v.id, ca.measure_raw AS measure, ca.witness_id AS wa,
+                      cb.witness_id AS wb
+               FROM verdict v
+               JOIN claim ca ON ca.id = v.claim_a
+               JOIN claim cb ON cb.id = v.claim_b
+               WHERE v.rule_id = ?
+               ORDER BY (ca.witness_id <> cb.witness_id) DESC,
+                        (LOWER(COALESCE(ca.unit_raw,'')) <> LOWER(COALESCE(cb.unit_raw,''))) DESC,
+                        ABS(COALESCE(ca.value_num, 0)) DESC,
+                        COALESCE(v.severity, 0) DESC, ABS(COALESCE(v.divergence,0)) DESC
+               LIMIT 1""",
+            (rule_id,),
+        )
+        if row:
+            out.append({
+                "rule": rule_id, "title": title, "blurb": blurb,
+                "vid": row["id"], "measure": row["measure"],
+                "cross": row["wa"] != row["wb"],
+            })
+    return out
+
+
+@app.get("/lemma/{lemma_key}", response_class=HTMLResponse)
+def lemma_detail(request: Request, lemma_key: str):
+    """Every reading of one subject, and every relationship between them."""
+    readings = db.rows(
+        conn,
+        """SELECT c.*, w.title AS witness_title, w.vintage_date,
+                  a.page_no, a.match_kind, p.printed_label
+           FROM claim c
+           JOIN witness w ON w.id = c.witness_id
+           LEFT JOIN anchor a ON a.claim_id = c.id
+           LEFT JOIN page p ON p.witness_id = c.witness_id AND p.page_no = a.page_no
+           WHERE c.lemma_key = ?
+           ORDER BY c.period_start, w.vintage_date, c.id""",
+        (lemma_key,),
+    )
+    if not readings:
+        raise HTTPException(404, "no such lemma")
+
+    verdicts = db.rows(
+        conn,
+        """SELECT v.*, ca.value_raw AS a_value, ca.unit_raw AS a_unit,
+                  ca.period_raw AS a_period, cb.value_raw AS b_value,
+                  cb.unit_raw AS b_unit, cb.period_raw AS b_period,
+                  wa.title AS a_witness, wb.title AS b_witness
+           FROM verdict v
+           JOIN claim ca ON ca.id = v.claim_a
+           JOIN claim cb ON cb.id = v.claim_b
+           JOIN witness wa ON wa.id = ca.witness_id
+           JOIN witness wb ON wb.id = cb.witness_id
+           WHERE v.lemma_key = ?
+           ORDER BY CASE v.verdict WHEN 'contradicts' THEN 0 WHEN 'corroborates' THEN 1
+                                   WHEN 'reconciled' THEN 2 ELSE 3 END,
+                    COALESCE(v.severity, 0) DESC""",
+        (lemma_key,),
+    )
+
+    # Fold readings that say the identical thing. One document phrasing the same
+    # figure as "Fiscal 2019" in a table and "for the year ended March 31, 2019"
+    # in prose yields two claims, and showing both as separate rows makes the
+    # subject look inconsistent when it is simply repeating itself. Both are
+    # kept in the database; only the display is collapsed, with a count.
+    prepared: list[dict] = []
+    seen: dict[tuple, dict] = {}
+    for r in readings:
+        d = dict(r)
+        d["basis_list"] = json.loads(d["basis"]) if d["basis"] else []
+        # Basis is deliberately NOT in the key. The same figure is often
+        # extracted once with its qualifier and once without, and those are the
+        # same reading. Standalone and consolidated must stay apart, so a fold
+        # only happens when one side states no basis at all or the two agree.
+        key = (d["witness_id"], d["period_start"], d["period_end"],
+               d["value_num"], d["unit_dim"])
+        prior = seen.get(key)
+        mergeable = (
+            prior is not None
+            and d["value_num"] is not None
+            and (not d["basis_list"] or not prior["basis_list"]
+                 or d["basis_list"] == prior["basis_list"])
+        )
+        if mergeable:
+            prior["repeats"] += 1
+            # Keep whichever reading actually states its basis.
+            if d["basis_list"] and not prior["basis_list"]:
+                prior["basis_list"] = d["basis_list"]
+            continue
+        d["repeats"] = 1
+        if prior is None:
+            seen[key] = d
+        prepared.append(d)
+
+    grouped: dict[str, list] = {}
+    for v in verdicts:
+        grouped.setdefault(v["verdict"], []).append(v)
+
+    return templates.TemplateResponse(
+        "lemma.html",
+        {
+            "request": request,
+            "lemma_key": lemma_key,
+            "measure": readings[0]["measure_raw"],
+            "readings": prepared,
+            "collapsed": len(readings) - len(prepared),
+            "grouped": grouped,
+            "n_verdicts": len(verdicts),
+            "n_witnesses": len({r["witness_id"] for r in readings}),
         },
     )
 
@@ -170,6 +341,19 @@ def _frame_diff(a: dict, b: dict) -> list[dict]:
         {"field": f, "a": x, "b": y, "same": str(x) == str(y)}
         for f, x, y in fields
     ]
+
+
+@app.get("/evidence-block/{claim_id}", response_class=HTMLResponse)
+def evidence_block(request: Request, claim_id: int):
+    """One reading's quote plus its rendered page, fetched on demand.
+
+    Page renders are a quarter of a megabyte each and a subject can carry a
+    dozen readings, so the subject view lists them and loads the picture only
+    when a reader asks for that one.
+    """
+    return templates.TemplateResponse(
+        "evidence_block.html", {"request": request, "claim": _claim(claim_id)}
+    )
 
 
 @app.get("/evidence/{claim_id}.png")
