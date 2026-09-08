@@ -106,7 +106,10 @@ CREATE TABLE IF NOT EXISTS measure (
     dimension       TEXT,                -- currency | percent | count | ratio | text
     embedding       BLOB,
     n_claims        INTEGER NOT NULL DEFAULT 0,
-    first_seen_in   INTEGER REFERENCES witness(id),
+    -- SET NULL, not the default NO ACTION: a measure outlives the document
+    -- that introduced it, and re-ingesting that document must not be blocked
+    -- by a provenance column.
+    first_seen_in   INTEGER REFERENCES witness(id) ON DELETE SET NULL,
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS measure_alias (

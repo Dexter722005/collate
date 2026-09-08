@@ -115,3 +115,27 @@ def test_disjoint_and_nested_are_distinguishable():
     fy22, fy24 = parse("FY22"), parse("FY24")
     assert not fy22.overlaps(fy24)
     assert parse("FY24").contains(parse("Q3 FY24"))
+
+
+@pytest.mark.parametrize(
+    "text,start,end",
+    [
+        ("the first eight months of FY25", d(2024, 4), d(2024, 12)),
+        ("first 8 months of FY25", d(2024, 4), d(2024, 12)),
+        ("first three months of FY24", d(2023, 4), d(2023, 7)),
+    ],
+)
+def test_first_n_months(text, start, end):
+    """An eight-month figure is not a year.
+
+    Left unparsed this collapsed to the whole fiscal year, and an eight-month
+    FDI number was compared against a twelve-month one and reported as a 98%
+    contradiction between the Economic Survey and the RBI.
+    """
+    p = parse(text)
+    assert (p.start, p.end) == (start, end), text
+
+
+def test_part_year_does_not_equal_its_year():
+    assert parse("first eight months of FY25") != parse("FY25")
+    assert parse("FY25").contains(parse("first eight months of FY25"))

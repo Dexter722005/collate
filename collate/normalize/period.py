@@ -98,6 +98,17 @@ _FY_SINGLE = re.compile(r"\b(?:FY|F\.Y\.|fiscal(?:\s+year)?|financial\s+year)\s*
 _CY = re.compile(r"\b(?:CY|calendar\s+year)\s*(\d{4}|\d{2})\b", re.I)
 _QUARTER = re.compile(r"\bQ([1-4])\b", re.I)
 _PART = re.compile(r"\b(H1|H2|1H|2H|9M)\b", re.I)
+# "the first eight months of FY25" is eight months, not a year. Left unhandled,
+# it resolved to the whole of FY25 and an eight-month FDI figure was compared
+# against a twelve-month one, which the cascade then reported as a 98%
+# contradiction between two institutions that were not disagreeing.
+_WORD_MONTHS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+}
+_FIRST_N_MONTHS = re.compile(
+    r"\bfirst\s+(" + "|".join(_WORD_MONTHS) + r"|\d{1,2})\s+months?\b", re.I
+)
 _BARE_YEAR = re.compile(r"\b(19|20)\d{2}\b")
 
 
@@ -129,12 +140,19 @@ def parse(text: str | None) -> Period | None:
 
     part = _PART.search(low)
     quarter = _QUARTER.search(low)
+    first_n = _FIRST_N_MONTHS.search(low)
 
     base = _fiscal_from(low)
     if base is None and (part or quarter):
         base = None
 
     if base is not None:
+        if first_n:
+            token = first_n.group(1).lower()
+            n = _WORD_MONTHS.get(token) or int(token)
+            n = max(1, min(n, 12))
+            return Period(base.start, _add_months(base.start, n),
+                          "year" if n == 12 else "part")
         if quarter:
             q = int(quarter.group(1))
             m0, m1 = QUARTER_MONTHS[q]

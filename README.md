@@ -62,24 +62,17 @@ uvicorn collate.api:app --reload
 # open http://127.0.0.1:8000
 ```
 
-**Rebuild the apparatus from the PDFs** (~6 minutes for the Delhivery trio;
+**Rebuild the apparatus from the PDFs** (~12 minutes for all six documents;
 every model call is cached on disk, so a second run is free):
 
 ```bash
-python -m collate build data/starter-datasets/delhivery
+python -m collate build data/starter-datasets
 ```
 
-A word on scope: Gemini's free tier enforces **20 requests per day per model**,
-not the 1,500 every published source claims (DECISIONS §13). The committed
-apparatus therefore covers the three Delhivery documents, which share an entity
-across three vintages and so actually produce cross-document collisions. The
-second dataset ingests with the same command and no code changes —
-
-```bash
-python -m collate build data/starter-datasets/india-macroeconomy
-```
-
-— it simply did not fit in one day's allowance alongside the first.
+Both starter datasets are ingested in the committed apparatus. Gemini's free
+tier enforces **20 requests per day per model**, not the 1,500 every published
+source claims (DECISIONS §13), so the client rotates across nine flash models
+and caches every call on disk — which is what makes 511 pages fit in a day.
 
 **Add your own documents** — through the UI, or:
 
@@ -106,78 +99,88 @@ python -m pytest -q
 
 ## The four cases
 
-Run `python -m collate cases` to have the system find these itself — it queries
-the live apparatus rather than reading a fixture, so if the corpus changes the
-examples change with it. A captured run is in
-[samples/four-cases.txt](samples/four-cases.txt).
+`python -m collate cases` has the system find these itself, by querying the live
+apparatus rather than reading a fixture — change the corpus and the examples
+change with it. A captured run is in [samples/four-cases.txt](samples/four-cases.txt).
 
-Current corpus: the three Delhivery documents, 227 pages, **581 anchored claims**,
-47 quarantined, 319 measures discovered, 203 adjudicated pairs.
+**Corpus:** all six starter documents — 511 pages, **1,967 anchored claims**,
+391 quarantined, 852 measures discovered, 384 entities, **704 adjudicated pairs**
+(34 corroborate, 77 contradict, 417 reconciled, 176 distinct).
 
 ### 1 · Corroborated across documents, expressed differently
 
-| | Annual Report FY24, p.36 | Earnings deck Q4 FY24, p.17 |
+| | Annual Report FY24, p.36 | Earnings deck, p.17 |
 | --- | --- | --- |
 | as printed | `₹85,942.34 million` | `8,594` under `₹ Cr` |
-| period | FY24 | FY24 |
 | normalised | **85,942,340,000 INR** | **85,940,000,000 INR** |
 
 > "Total income increased by 14.13% to ₹85,942.34 million for FY24…"
 > `Total income | 1,934 | 2,325 | 2,195 | (5.6%) | 13.5% | | 7,530 | 8,594 | 14.1%`
 
-Rule `UNIT_SCALE` → **corroborates**. The two strings share almost no
-characters; one is prose, the other a table row with nine cells. They are the
-same number.
+`UNIT_SCALE` → **corroborates**. One is prose, the other a nine-cell table row,
+and they share almost no characters. Same number.
 
 ### 2 · A genuine contradiction
 
-No cross-document contradiction survives scrutiny in this corpus — which is
-itself a finding, and the tool says so rather than inventing one. What it does
-surface are within-document conflicts, the strongest being unlabelled ESOP
-grant tables where the same measure and date carry different figures. The
-escalation pass diagnoses the mechanism as `UNLABELED_TABLE_ROWS`: the table has
-no row labels tying each figure to a scheme, so the extraction is ambiguous and
-the conflict is real but attributable.
+Two institutions, same period, same units, both calling it net FDI:
+
+| | Economic Survey 2024-25, p.66 | RBI Annual Report 2024-25, p.85 |
+| --- | --- | --- |
+| | "For FY24 as a whole, the net FDI was **USD 10.1 billion**." | `Net Inward FDI (1.1.1 - 1.1.2) … 26.8  29.6` |
+| period | FY24 | FY24 (2023-24 column) |
+
+`CONTRADICTS` → escalated → the model **upholds** it (`UNRESOLVED_DISCREPANCY`),
+noting the quotes carry no methodological context that would bridge a 62% gap.
+
+That is the correct answer *on the evidence shown*. The real explanation is
+almost certainly definitional — the Survey's "net FDI" nets out Indian outward
+investment, the RBI's "Net Inward FDI" does not — but neither quote says so, and
+inventing that reconciliation from outside the documents is exactly what this
+system is built not to do. `sufficient_context` exists for this.
 
 ### 3 · An apparent contradiction explained by context
 
-| | | |
-| --- | --- | --- |
 | Revenue from Operations, FY24 | `74,540.82 ₹ Million` | `81,415.38 ₹ Million` |
+| --- | --- | --- |
 | basis | **standalone** | **consolidated** |
 
-Rule `BASIS_MISMATCH` → **reconciled**. Same entity, same measure, same period,
-a 9.2% gap, and no disagreement at all: these are different figures by
-construction. This only works because `(Standalone)` is lifted out of the
-measure's *name* and into the frame's basis — otherwise the two are unrelated
-measures that never meet.
+`BASIS_MISMATCH` → **reconciled**. Same entity, measure, period and unit; a 9.2%
+gap and no disagreement whatever. Both come from one four-column row, and this
+only works because `(Standalone)` is lifted out of the measure's *name* into the
+frame's basis — otherwise they are two unrelated measures that never meet.
 
-A second flavour, `SIGN_CONVENTION`: the annual report's table writes
-`(2,491.86)` and its own prose writes `₹2,491.86 million`. Same magnitude,
-opposite sign, because one follows the accounting convention of parenthesising
-a negative. Without that rule the system reports a 200% disagreement between a
-document and itself.
+Two more flavours the cascade produces on this corpus: `SIGN_CONVENTION` (the
+annual report's table writes `(2,491.86)` where its own prose writes
+`₹2,491.86 million` — same magnitude, accounting parentheses) and
+`PERIOD_NESTED` (an eight-month figure inside its fiscal year).
 
-### 4 · A failure, measured rather than asserted
+### 4 · Failures, measured rather than asserted
 
-**Two of them, both found by instrumentation rather than by inspection.**
+**Extraction.** 391 of 2,358 proposed claims (**16.6%**) failed the anchoring gate
+and were quarantined with their payloads, not silently dropped.
 
-*Extraction.* 47 of 628 proposed claims (7.5%) failed the anchoring gate and
-were quarantined, not dropped. Separately, **24 of the earnings deck's 27 pages**
-carry almost no extractable text — the numbers live inside chart graphics.
-Nothing was extracted from them and nothing was invented for them; they are
-counted as sparse at `/quarantine`. That is why the deck contributes 35 claims
-where the annual report contributes 253.
+The instructive one: the RBI annual report first anchored at **39%**, with 587
+rejections. The quarantined quotes read as fluent, plausible prose — e.g.
+*"Global inflation eased to 5.7 per cent in 2024 from 6.6 per cent in 2023"* —
+but the page actually says *"global inflation is expected to moderate from 5.7
+per cent in 2024 to 4.3 per cent in 2025"*. The cause was in the segmenter, not
+the model: **80 of its 100 pages are two-column**, and sorting blocks by `(y, x)`
+interleaved the columns and shredded every sentence. The model was reconstructing
+prose from fragments. Column-aware reading order took that document from
+**39% → 71%** and added 419 claims. The gate had been catching all of it.
 
-*Reasoning.* Of 11 contradictions escalated to the model, **it overruled 8** as
-not contradictions at all — different denominators, different service lines,
-managerial versus non-managerial staff, Part Truck Load versus Truck Load. Those
-are measure-registry over-merges: the embedding put two different line items in
-one lemma. The structural substitution guard (§ DECISIONS 15) removed the worst
-class of these, and the remainder are visible in the UI precisely because the
-model's note sits *beside* the rule's verdict rather than replacing it. A system
-where the LLM silently decided would have shown eight confident false
-contradictions and no way to notice.
+Separately, **24 of the earnings deck's 27 pages** carry almost no extractable
+text — their numbers live inside chart graphics. Nothing was extracted and
+nothing invented; they are counted as sparse at `/quarantine`.
+
+**Reasoning.** Escalating contradictions to the model overruled a substantial
+fraction of them as not contradictions at all — different denominators, different
+service lines, managerial versus non-managerial staff, Part Truck Load versus
+Truck Load. Those are measure-registry over-merges. The structural substitution
+guard (DECISIONS §15) removed the worst class; the rest stay visible precisely
+because the model's note sits *beside* the rule's verdict instead of replacing
+it. A design where the LLM decided silently would have shown confident false
+contradictions with no way to notice.
 
 ## Architecture
 

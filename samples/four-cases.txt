@@ -21,7 +21,7 @@ CASE 1  A fact corroborated across documents, expressed differently
     and 8,594 ₹ Cr in Earnings Presentation Q4 & FY24 (2024-05-17) both normalise to
     85,942,340,000 INR.
 
-  inspect: http://127.0.0.1:8000/verdict/85   evidence: /evidence/366.png , /evidence/562.png
+  inspect: http://127.0.0.1:8000/verdict/106   evidence: /evidence/366.png , /evidence/562.png
 
 ================================================================================================
 CASE 2  A genuine or likely contradiction
@@ -29,28 +29,28 @@ CASE 2  A genuine or likely contradiction
   Same entity, measure, period, basis and unit dimension - and different numbers, with nothing
   in either frame to account for the gap.
 
-  lemma  : Increase/(Decrease) in the average salaries of employees other than managerial personnel
+  lemma  : net FDI
   rule   : CONTRADICTS   verdict: contradicts
 
-  reading A  14 per cent   [FY24]
-             Annual Report 2023-24  published None  p.34
-             “Increase/(Decrease) in the average salaries of employees other than managerial personnel in the FY24 was 14%.”
+  reading A  10.1 USD billion   [FY24]
+             Economic Survey 2024-25  published 2025-01  p.66
+             “For FY24 as a whole, the net FDI was USD 10.1 billion.”
 
-  reading B  (6.97) per cent   [FY24]
-             Annual Report 2023-24  published None  p.34
-             “Increase/(Decrease) in the average salaries of managerial personnel in FY24 was (6.97)%.”
+  reading B  26.8 US$ billion   [2023-24]
+             ANNUAL REPORT FOR THE YEAR 2024-25  published 2025  p.85
+             “| 1.1 Net Inward FDI (1.1.1 - 1.1.2) | 56.2 | 42.0 | 26.8 | 29.6 |”
 
   reasoning:
-    Same entity, measure, period (FY24) and basis, but Annual Report 2023-24 (undated)
-    reports 14 per cent and Annual Report 2023-24 (undated) reports (6.97) per cent - a
-    149.8% difference with nothing in either frame to account for it.
+    Same entity, measure, period (FY24) and basis, but Economic Survey 2024-25 (undated)
+    reports 10.1 USD billion and ANNUAL REPORT FOR THE YEAR 2024-25 (undated) reports 26.8
+    US$ billion - a 62.3% difference with nothing in either frame to account for it.
 
-  escalated -> model says distinct (MANAGERIAL_VS_NON_MANAGERIAL):
-    Reading A measures the change in average salaries for employees other than managerial
-    personnel (14%), whereas Reading B specifically measures managerial personnel ((6.97)%).
-    These represent two distinct employee populations.
+  escalated -> model says contradicts (UNRESOLVED_DISCREPANCY):
+    The Economic Survey reports net FDI as USD 10.1 billion for FY24, while the Annual
+    Report lists it as 26.8 US$ billion without providing sufficient methodological context
+    in the text to reconcile the substantial gap.
 
-  inspect: http://127.0.0.1:8000/verdict/101   evidence: /evidence/364.png , /evidence/365.png
+  inspect: http://127.0.0.1:8000/verdict/509   evidence: /evidence/843.png , /evidence/2300.png
 
 ================================================================================================
 CASE 3  An apparent contradiction explained by context
@@ -73,7 +73,7 @@ CASE 3  An apparent contradiction explained by context
     Different reporting basis: standalone against consolidated. These are different figures
     by construction, not competing measurements of one figure.
 
-  inspect: http://127.0.0.1:8000/verdict/8   evidence: /evidence/336.png , /evidence/338.png
+  inspect: http://127.0.0.1:8000/verdict/29   evidence: /evidence/336.png , /evidence/338.png
 
 ================================================================================================
 CASE 4  An extraction or reasoning failure, and how it was handled
@@ -81,16 +81,19 @@ CASE 4  An extraction or reasoning failure, and how it was handled
   Every claim must be found again in the page it came from before it is admitted. These failed
   and were kept rather than deleted.
 
-  admitted    581
-  rejected    47   (7.5% of proposals)
-    unanchored             40
-    value_not_in_quote     6
+  admitted    1967
+  rejected    391   (16.6% of proposals)
+    unanchored             371
+    value_not_in_quote     19
     passage_failed         1
 
   Pages carrying almost no extractable text (numbers locked in chart graphics):
     Earnings Presentation Q4 & FY24                          24/27 pages
     Annual Report 2023-24                                    16/100 pages
+    INDIA 2025 ARTICLE IV CONSULTATION—PRESS RELEASE; STAFF  12/95 pages
+    Economic Survey 2024-25                                  9/89 pages
     PROSPECTUS                                               8/100 pages
+    ANNUAL REPORT FOR THE YEAR 2024-25                       5/100 pages
   Nothing was extracted from those pages and nothing was invented for them. The gap is
   reported at /quarantine instead of being silent. The fix is a vision pass over flagged pages
   - one model call each, which did not fit the free-tier budget.

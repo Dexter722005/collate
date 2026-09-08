@@ -47,30 +47,70 @@ BASIS_RE = re.compile(
 # physical index. Checked only at the top and bottom margins.
 PAGE_LABEL_RE = re.compile(r"^\s*(?:page\s+)?([0-9]{1,4}|[ivxlcdm]{1,7})\s*$", re.IGNORECASE)
 
-# Sized against the real quota, which is not the published one. Gemini's free
-# tier is documented everywhere as 1,500 requests/day; the API actually enforces
-# GenerateRequestsPerDayPerProjectPerModel-FreeTier = 20 requests/day/model.
-# Two orders of magnitude out, and it inverts the batching arithmetic: with 20
-# requests to spend, a 100-page document has to fit in about four of them.
+# Passage sizing, arrived at by measurement rather than by argument.
 #
-# What makes that survivable is that the constraint is on REQUESTS and the
-# context window is a million tokens. So passages went from 4 pages to ~25, and
-# the corpus from ~210 requests to ~30. More context per call also means fewer
-# tables split across a boundary, so as in the earlier sizing decision, the
-# quota constraint and the extraction-quality argument point the same way.
-# ...and then measured, which reversed the decision. At 25 pages the model stops
-# enumerating and starts summarising: the earnings deck went from 84 claims to
-# 2, and one document lost every passage to 503s with no partial credit. Recall
-# collapsed long before the context window did.
+# The published free tier is 1,500 requests/day. The API actually enforces
+# GenerateRequestsPerDayPerProjectPerModel-FreeTier = 20/day/model, two orders
+# of magnitude lower, which made a strong case for using the million-token
+# context and batching ~25 pages per request.
 #
-# So the sizing is back where it started, and the quota is absorbed elsewhere -
-# by rotating models (nine of them, 20/day each) and by a disk cache that does
-# not key on the model. The honest summary is that the free tier does not fit a
-# 600-page corpus in one day, and the fix is to spend the budget on the corpus
-# that has to be dense rather than to thin out every document equally.
+# That was tried and reversed. At 25 pages the model stops enumerating and
+# starts summarising - the earnings deck fell from 84 claims to 2, and the whole
+# corpus produced 8 verdicts with no contradictions in them. Recall collapses
+# long before the context window does, and a failed 25-page passage loses 25
+# pages where a failed 4-page one loses four.
+#
+# So the quota is absorbed elsewhere: by rotating models (nine of them, 20/day
+# each) and by a disk cache that deliberately does not key on the model.
 MAX_PASSAGE_CHARS = 24_000
 MAX_PASSAGE_PAGES = 4
 SPARSE_DENSITY = 0.0035  # chars per pt^2; tuned against the slide deck
+
+
+def _columns(blocks: list, page_width: float) -> int:
+    """How many text columns is this page laid out in? 1 or 2.
+
+    Reading order matters more than it looks. Sorting blocks by (y, x) is right
+    for a single column and catastrophic for two: it interleaves the left and
+    right columns line by line, so every sentence in the document arrives cut in
+    half and spliced to an unrelated one. The model then does the reasonable
+    thing and reconstructs fluent prose out of the fragments - which is to say
+    it produces sentences that are not in the document, and the anchoring gate
+    rejects them. On the RBI annual report that was 587 claims, a 39% anchor
+    rate, and the cause was invisible from the claim side.
+
+    Detection is deliberately conservative: a page counts as two-column only
+    when blocks sit cleanly either side of the centre and few straddle it.
+    Tables and full-width headings straddle, which is why they are counted.
+    """
+    mid = page_width / 2
+    left = right = straddle = 0
+    for b in blocks:
+        x0, x1 = b.bbox[0], b.bbox[2]
+        if x1 < mid + 8:
+            left += 1
+        elif x0 > mid - 8:
+            right += 1
+        else:
+            straddle += 1
+    sided = left + right
+    if sided < 6 or right < 2 or left < 2:
+        return 1
+    return 2 if straddle <= sided * 0.35 else 1
+
+
+def _reading_order(blocks: list, page_width: float) -> list:
+    columns = _columns(blocks, page_width)
+    if columns == 1:
+        return sorted(blocks, key=lambda b: (round(b.bbox[1], 1), b.bbox[0]))
+    mid = page_width / 2
+    def key(b):
+        # Full-width blocks keep their vertical position and sort ahead of the
+        # column they open; column blocks read top-to-bottom, left before right.
+        straddles = b.bbox[0] <= mid - 8 and b.bbox[2] >= mid + 8
+        column = 0 if straddles else (0 if b.bbox[2] < mid + 8 else 1)
+        return (column, round(b.bbox[1], 1), b.bbox[0])
+    return sorted(blocks, key=key)
 
 
 @dataclass
@@ -206,7 +246,7 @@ def read_pages(pdf_path: Path) -> list[Page]:
                 Block(page_no, 0, "table", body, bbox) for bbox, body in tables
             ]
 
-            ordered = sorted(prose + table_blocks, key=lambda b: (round(b.bbox[1], 1), b.bbox[0]))
+            ordered = _reading_order(prose + table_blocks, rect.width)
 
             parts: list[str] = []
             cursor = 0
