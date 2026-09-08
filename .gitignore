@@ -1,6 +1,9 @@
 # secrets
 .env
 
+# Superjoin's assignment brief. Their document, not mine to republish.
+superjoin-*.pdf
+
 # stray root-level copy of the dataset (canonical copy lives in data/)
 /starter-datasets/
 /starter-datasets.zip
