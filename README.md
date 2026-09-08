@@ -109,7 +109,18 @@ python -m pytest -q
 
 ## Video Demo
 
-**→ [demo video](PASTE_LINK_HERE)** (under 3 minutes)
+**→ [demo video](PASTE_LINK_HERE)** · also in this repo at
+[`demo/collate-demo.mp4`](demo/collate-demo.mp4) (2:13)
+
+The take is scripted rather than screen-captured — see
+[`tools/record_demo.py`](tools/record_demo.py). Playwright drives the live
+application, captions are injected into the page and recorded with it, and the
+timings live in the script. A caption that reads badly is a one-line edit and a
+re-run, and the take is identical every time.
+
+That paid for itself immediately: the first recording had a caption citing
+$10.1bn while the screen showed $19.8bn, because the server was running code
+from before a fix. Watching the frames caught it.
 
 ## The four cases
 

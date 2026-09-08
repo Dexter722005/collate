@@ -18,6 +18,9 @@ venv/
 # PDFs added through the UI at runtime
 data/uploads/
 
+# intermediate recording; the mp4 beside it is committed
+demo/*.webm
+
 # collate runtime state
 *.db
 *.db-wal
