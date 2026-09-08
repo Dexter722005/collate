@@ -114,11 +114,19 @@ def elicit_witness(
     pages: list,
     passages: list,
     header_default: str | None = None,
-    workers: int = 4,
+    workers: int | None = None,
 ) -> ElicitStats:
-    """Extract, anchor, and persist. Concurrency is bounded by the rate limiter
-    inside the client, so `workers` only controls how many requests are queued
-    behind it, not how fast we hit the API."""
+    """Extract, anchor, and persist.
+
+    Worker count is set well above what the rate limit alone would suggest,
+    because the binding constraint turned out to be latency, not quota: calls
+    average ~48 seconds, so four workers only managed five requests a minute
+    against an allowance of fifteen. Enough workers to keep the limiter itself
+    saturated is the right number, and the limiter is what actually protects
+    the quota."""
+    import os
+
+    workers = workers or int(os.environ.get("COLLATE_WORKERS", 12))
     stats = ElicitStats(passages=len(passages))
     reasons: dict[str, int] = {}
 

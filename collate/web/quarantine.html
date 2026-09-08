@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Quarantine &mdash; Collate{% endblock %}
+{% block body %}
+<div class="wide">
+  <div class="prose">
+    <h2 style="font-family:var(--serif);font-weight:600;margin:0 0 10px">What the system threw away</h2>
+    <p>
+      Every claim the model proposed had to be found again in the page it came from,
+      character for character, before it was allowed into the apparatus. The ones below
+      failed that check and were kept here rather than deleted, because a system that
+      reports only its successes is not reporting.
+    </p>
+    <p>
+      <strong>unanchored</strong> means the quoted text could not be located on any page of
+      the passage, even fuzzily &mdash; usually a reflowed table row, sometimes an invention.
+      <strong>value_not_in_quote</strong> means the quote was genuine but the number
+      attached to it was not in it, which is the more dangerous failure: a real citation
+      wrapped around a figure taken from somewhere else on the page.
+    </p>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:22px;max-width:900px">
+    <div>
+      <h3 class="sub" style="margin-top:0">Rejections by reason</h3>
+      <table class="plain">
+        <tr><th>reason</th><th style="text-align:right">count</th></tr>
+        {% for r in by_reason %}
+        <tr><td>{{ r.reason }}</td><td style="text-align:right">{{ r.c }}</td></tr>
+        {% endfor %}
+      </table>
+      <dl class="stat-grid" style="margin-top:14px">
+        <dt>claims admitted</dt><dd>{{ stats.claims }}</dd>
+        <dt>claims rejected</dt><dd>{{ stats.quarantined }}</dd>
+      </dl>
+    </div>
+
+    <div>
+      <h3 class="sub" style="margin-top:0">Pages with almost no extractable text</h3>
+      <table class="plain">
+        <tr><th>witness</th><th style="text-align:right">sparse pages</th></tr>
+        {% for s in sparse %}
+        <tr><td>{{ s.title|truncate(40) }}</td><td style="text-align:right">{{ s.c }}</td></tr>
+        {% endfor %}
+      </table>
+      <p style="font-family:var(--serif);font-size:12.5px;color:var(--ink-2);margin-top:10px;max-width:44ch">
+        These are pages whose numbers live inside chart graphics rather than in the text
+        layer. Nothing was extracted from them and nothing was invented for them. They are
+        counted here so the gap is visible instead of silent.
+      </p>
+    </div>
+  </div>
+
+  <h3 class="sub" style="max-width:900px">Rejected claims</h3>
+  <table class="plain" style="max-width:900px">
+    <tr><th>witness</th><th>reason</th><th>what the model proposed</th></tr>
+    {% for r in rows %}
+    <tr>
+      <td style="white-space:nowrap">{{ r.title|truncate(26) }}</td>
+      <td>{{ r.reason }}</td>
+      <td style="color:var(--ink-2)">{{ r.payload|truncate(220) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

@@ -113,7 +113,10 @@ def parse_unit(raw: str | None, fallback_currency: str | None = None) -> tuple[s
     """Return (dimension, scale multiplier)."""
     s = " ".join(str(raw or "").lower().split())
     if not s:
-        return (fallback_currency or "count"), 1.0
+        # No unit stated means a count, never the document's default currency.
+        # Inheriting INR here turned "Processing centers: 160" into 160 rupees,
+        # which then sat in the same dimension as revenue and compared against it.
+        return "count", 1.0
 
     if any(w in s for w in PERCENT_WORDS):
         # Basis points are percent/100 and get folded in here rather than
@@ -128,7 +131,11 @@ def parse_unit(raw: str | None, fallback_currency: str | None = None) -> tuple[s
             dimension = code
             break
     if dimension is None:
-        dimension = fallback_currency or "count"
+        # A unit was stated but names no currency ("Mn shipments", "tonnes").
+        # Only inherit the document's currency when the unit is a bare scale
+        # word, which is the one case where the currency really was elided.
+        bare_scale = s.strip() in SCALES
+        dimension = (fallback_currency or "count") if bare_scale else "count"
 
     scale = 1.0
     for word, mult in sorted(SCALES.items(), key=lambda kv: -len(kv[0])):

@@ -109,7 +109,11 @@ def stage_rank(tokens: list[str]) -> int | None:
     return STAGE_ORDER.index(stage) if stage else None
 
 
-def normalize_claim(conn, claim: dict, witness: dict) -> dict:
+def normalize_claim(
+    conn, claim: dict, witness: dict,
+    index: "registry.MeasureIndex | None" = None,
+    vec=None,
+) -> dict:
     """Resolve one claim's frame. Returns the fields to write back onto the row."""
     qualifiers = claim.get("qualifiers")
     if isinstance(qualifiers, str):
@@ -139,9 +143,8 @@ def normalize_claim(conn, claim: dict, witness: dict) -> dict:
     )
     dimension = qty.dimension if qty else None
 
-    measure_id = registry.resolve_measure(
-        conn, claim.get("measure_raw") or "", dimension, witness.get("id")
-    )
+    idx = index or registry.MeasureIndex(conn)
+    measure_id = idx.resolve(claim.get("measure_raw") or "", dimension, witness.get("id"), vec=vec)
 
     per = period_mod.parse(claim.get("period_raw"))
     tokens = basis_tokens(claim.get("basis_raw"), qualifiers)
@@ -176,10 +179,22 @@ def normalize_witness(conn, witness_id: int) -> int:
     claims = conn.execute(
         "SELECT * FROM claim WHERE witness_id=? AND frame_key IS NULL", (witness_id,)
     ).fetchall()
+    if not claims:
+        return 0
+
+    # Encode every distinct measure phrase in one pass. Batching here rather
+    # than per-claim is the difference between seconds and an hour on a full
+    # corpus, and the model is far more efficient on a batch than on singles.
+    index = registry.MeasureIndex(conn)
+    phrases = sorted({" ".join((c["measure_raw"] or "").split()) for c in claims} - {""})
+    vectors = dict(zip(phrases, registry.embed(phrases))) if phrases else {}
 
     framed = 0
     for row in claims:
-        fields = normalize_claim(conn, dict(row), witness)
+        phrase = " ".join((row["measure_raw"] or "").split())
+        fields = normalize_claim(
+            conn, dict(row), witness, index=index, vec=vectors.get(phrase)
+        )
         conn.execute(
             "UPDATE claim SET entity_id=?, measure_id=?, value_num=?, value_text=?, unit_dim=?,"
             " unit_scale=?, period_start=?, period_end=?, period_grain=?, basis=?, lemma_key=?,"

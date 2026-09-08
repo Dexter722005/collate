@@ -1,0 +1,64 @@
+{# The reasoning drawer. Rendered into the evidence pane by htmx.
+
+   Order is deliberate: the verdict, then WHY in plain prose, then the frame
+   diff with the differing coordinate highlighted, then the quotes, then the
+   pages themselves. A reader should be able to stop at any point and have got
+   something true. #}
+
+<div class="verdict-head">
+  <span class="rule-tag v-{{ v.verdict }}">{{ v.verdict }} &middot; {{ v.rule_id.replace('_',' ') }}</span>
+  <p class="why">{{ v.explanation }}</p>
+</div>
+
+<h3 class="sub" style="margin-top:14px">Frame comparison</h3>
+<table class="frame-diff">
+  <tr>
+    <th>coordinate</th>
+    <th>{{ a.witness_title|truncate(30) }}</th>
+    <th>{{ b.witness_title|truncate(30) }}</th>
+  </tr>
+  {% for row in diff %}
+  <tr class="{% if not row.same %}differs{% endif %}">
+    <td>{{ row.field }}</td>
+    <td>{{ row.a }}</td>
+    <td>{{ row.b }}</td>
+  </tr>
+  {% endfor %}
+</table>
+<p style="font-family:var(--mono);font-size:10px;color:var(--muted);margin:2px 0 0">
+  Highlighted rows are the coordinates that differ. Where a rule reconciled the pair,
+  the highlighted row <em>is</em> the explanation.
+</p>
+
+{% if llm %}
+<div class="machine-note">
+  <div class="label">Escalated to the model &mdash; advisory, does not override the rule</div>
+  <div class="body">{{ llm.explanation }}</div>
+  <div class="verdict-of-model">
+    model says: <strong>{{ llm.relationship }}</strong>
+    {% if llm.reason_code %}&middot; {{ llm.reason_code }}{% endif %}
+    {% if not llm.sufficient_context %}&middot; <em>insufficient context in the quotes</em>{% endif %}
+    {% if llm.relationship != v.verdict %}
+      <br><span style="color:var(--contradicts)">disagrees with the rule engine &mdash; the rule stands, both are shown</span>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<h3 class="sub">Evidence</h3>
+
+{% for s in [a, b] %}
+<div class="evidence-block">
+  <div class="evidence-meta">
+    <span>{{ s.witness_title|truncate(44) }}</span>
+    <span>
+      p.{{ (s.page_no or 0) + 1 }}{% if s.printed_label %} (printed {{ s.printed_label }}){% endif %}
+      &middot; {{ s.match_kind or 'unanchored' }}
+    </span>
+  </div>
+  <blockquote class="quote">{{ s.quote }}</blockquote>
+  {% if s.page_no is not none %}
+  <img class="page-shot" loading="lazy" src="/evidence/{{ s.id }}.png" alt="source page {{ (s.page_no or 0) + 1 }}">
+  {% endif %}
+</div>
+{% endfor %}

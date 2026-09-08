@@ -179,9 +179,17 @@ class Gemini:
         editing a prompt should invalidate its cached answers, silently reusing
         them would make prompt iteration a lie.
         """
-        schema_repr = getattr(schema, "__name__", None) or json.dumps(schema, sort_keys=True)[:400]
+        # The full expanded schema, not its class name. Field descriptions ARE
+        # the prompt - they are what tells the model an entity is not a segment -
+        # so editing one has to invalidate its cached answers. Keying on
+        # `schema.__name__` looked equivalent and quietly served stale results
+        # through an entire prompt revision.
+        if hasattr(schema, "model_json_schema"):
+            schema_repr = json.dumps(schema.model_json_schema(), sort_keys=True)
+        else:
+            schema_repr = json.dumps(schema, sort_keys=True, default=str)
         key = hashlib.sha256(
-            "\x00".join([self.model, purpose, system, user, str(schema_repr)]).encode("utf-8")
+            "\x00".join([self.model, purpose, system, user, schema_repr]).encode("utf-8")
         ).hexdigest()
 
         cached = self._cache_path(key)

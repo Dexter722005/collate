@@ -72,66 +72,96 @@ def slugify(text: str, maxlen: int = 60) -> str:
 # -- measures ---------------------------------------------------------------
 
 
-def _load_measures(conn) -> tuple[list[int], np.ndarray | None, dict[str, int]]:
-    rows = conn.execute(
-        "SELECT id, slug, canonical_label, embedding FROM measure WHERE embedding IS NOT NULL"
-    ).fetchall()
-    ids = [r["id"] for r in rows]
-    mat = (
-        np.vstack([np.frombuffer(r["embedding"], dtype=np.float32) for r in rows])
-        if rows
-        else None
-    )
-    aliases = {
-        r["phrase"]: r["measure_id"]
-        for r in conn.execute("SELECT phrase, measure_id FROM measure_alias").fetchall()
-    }
-    return ids, mat, aliases
+class MeasureIndex:
+    """The registry, held in memory for the length of a run.
+
+    The first version of this re-read every embedding out of SQLite and encoded
+    one phrase per call, which cost 1.4 seconds per claim - fine for the 69
+    claims of a slide deck, an hour and a half for the full corpus. The vectors
+    are a few hundred KB; keeping them in a matrix and appending on mint turns
+    the inner loop into a single matrix-vector product.
+    """
+
+    def __init__(self, conn):
+        self.conn = conn
+        rows = conn.execute(
+            "SELECT id, embedding FROM measure WHERE embedding IS NOT NULL ORDER BY id"
+        ).fetchall()
+        self.ids: list[int] = [r["id"] for r in rows]
+        self.mat: np.ndarray | None = (
+            np.vstack([np.frombuffer(r["embedding"], dtype=np.float32) for r in rows])
+            if rows
+            else None
+        )
+        self.aliases: dict[str, int] = {
+            r["phrase"]: r["measure_id"]
+            for r in conn.execute("SELECT phrase, measure_id FROM measure_alias").fetchall()
+        }
+
+    def _append(self, mid: int, vec: np.ndarray) -> None:
+        self.ids.append(mid)
+        row = vec.reshape(1, -1)
+        self.mat = row if self.mat is None else np.vstack([self.mat, row])
+
+    def resolve(
+        self, phrase: str, dimension: str | None, witness_id: int | None,
+        vec: np.ndarray | None = None,
+    ) -> int | None:
+        phrase = " ".join(str(phrase or "").split())
+        if not phrase:
+            return None
+        key = phrase.lower()
+
+        if key in self.aliases:
+            mid = self.aliases[key]
+            self.conn.execute("UPDATE measure SET n_claims = n_claims + 1 WHERE id = ?", (mid,))
+            return mid
+
+        if vec is None:
+            vec = embed([phrase])[0]
+
+        best_id, best_score = None, 0.0
+        if self.mat is not None and self.ids:
+            sims = self.mat @ vec
+            j = int(np.argmax(sims))
+            best_id, best_score = self.ids[j], float(sims[j])
+
+        if best_id is not None and best_score >= MERGE:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO measure_alias (measure_id, phrase, similarity)"
+                " VALUES (?,?,?)",
+                (best_id, key, best_score),
+            )
+            self.conn.execute(
+                "UPDATE measure SET n_claims = n_claims + 1 WHERE id = ?", (best_id,)
+            )
+            self.aliases[key] = best_id
+            return best_id
+
+        slug = slugify(phrase)
+        n = 1
+        while self.conn.execute("SELECT 1 FROM measure WHERE slug = ?", (slug,)).fetchone():
+            n += 1
+            slug = f"{slugify(phrase)}_{n}"
+        cur = self.conn.execute(
+            "INSERT INTO measure (slug, canonical_label, dimension, embedding, n_claims,"
+            " first_seen_in) VALUES (?,?,?,?,1,?)",
+            (slug, phrase, dimension, vec.tobytes(), witness_id),
+        )
+        mid = int(cur.lastrowid)
+        self.conn.execute(
+            "INSERT OR IGNORE INTO measure_alias (measure_id, phrase, similarity) VALUES (?,?,1.0)",
+            (mid, key),
+        )
+        self.aliases[key] = mid
+        self._append(mid, vec)
+        return mid
 
 
 def resolve_measure(conn, phrase: str, dimension: str | None, witness_id: int | None) -> int | None:
-    """Map a measure phrase onto the registry, growing it when nothing fits."""
-    phrase = " ".join(str(phrase or "").split())
-    if not phrase:
-        return None
-    key = phrase.lower()
-
-    ids, mat, aliases = _load_measures(conn)
-    if key in aliases:
-        conn.execute("UPDATE measure SET n_claims = n_claims + 1 WHERE id = ?", (aliases[key],))
-        return aliases[key]
-
-    vec = embed([phrase])[0]
-    best_id, best_score = None, 0.0
-    if mat is not None and len(ids):
-        sims = mat @ vec
-        j = int(np.argmax(sims))
-        best_id, best_score = ids[j], float(sims[j])
-
-    if best_id is not None and best_score >= MERGE:
-        conn.execute(
-            "INSERT OR IGNORE INTO measure_alias (measure_id, phrase, similarity) VALUES (?,?,?)",
-            (best_id, key, best_score),
-        )
-        conn.execute("UPDATE measure SET n_claims = n_claims + 1 WHERE id = ?", (best_id,))
-        return best_id
-
-    slug = slugify(phrase)
-    n = 1
-    while conn.execute("SELECT 1 FROM measure WHERE slug = ?", (slug,)).fetchone():
-        n += 1
-        slug = f"{slugify(phrase)}_{n}"
-    cur = conn.execute(
-        "INSERT INTO measure (slug, canonical_label, dimension, embedding, n_claims, first_seen_in)"
-        " VALUES (?,?,?,?,1,?)",
-        (slug, phrase, dimension, vec.tobytes(), witness_id),
-    )
-    mid = int(cur.lastrowid)
-    conn.execute(
-        "INSERT OR IGNORE INTO measure_alias (measure_id, phrase, similarity) VALUES (?,?,1.0)",
-        (mid, key),
-    )
-    return mid
+    """Single-shot resolution. Convenient for one-off calls; batch through
+    MeasureIndex when framing a whole witness."""
+    return MeasureIndex(conn).resolve(phrase, dimension, witness_id)
 
 
 def measure_similarity(conn, a_id: int, b_id: int) -> float:
@@ -147,15 +177,15 @@ def measure_similarity(conn, a_id: int, b_id: int) -> float:
 def neighbours(conn, measure_id: int, floor: float = NEIGHBOUR) -> list[tuple[int, float]]:
     """Measures close enough to be worth comparing but not close enough to merge.
     This is what makes 'revenue from operations' and 'total income' meet at all."""
-    ids, mat, _ = _load_measures(conn)
-    if mat is None or measure_id not in ids:
+    index = MeasureIndex(conn)
+    if index.mat is None or measure_id not in index.ids:
         return []
-    vec = mat[ids.index(measure_id)]
-    sims = mat @ vec
+    vec = index.mat[index.ids.index(measure_id)]
+    sims = index.mat @ vec
     out = [
-        (ids[i], float(s))
+        (index.ids[i], float(s))
         for i, s in enumerate(sims)
-        if ids[i] != measure_id and floor <= s < MERGE
+        if index.ids[i] != measure_id and floor <= s < MERGE
     ]
     return sorted(out, key=lambda t: -t[1])
 

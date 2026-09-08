@@ -36,10 +36,19 @@ class RawClaim(BaseModel):
         )
     )
     page: int = Field(description="The [page N] marker the quote sits under.")
-    entity: str = Field(description="Who or what the claim is about, as written.")
+    entity: str = Field(
+        description=(
+            "The organisation, country, person or place the claim is about, as written. "
+            "A business segment, product line or line item is NOT an entity: for "
+            "'Express Parcel revenue' at Acme Ltd, the entity is 'Acme Ltd' and the "
+            "measure is 'Express Parcel revenue'. Use the document's own name for its "
+            "subject; 'the Company' is acceptable and will be resolved."
+        )
+    )
     measure: str = Field(
         description="What is being asserted, as written: 'Revenue from operations', "
-        "'real GDP growth', 'Director'. Do not translate into a standard vocabulary."
+        "'real GDP growth', 'Director'. Keep any segment or product qualifier here. "
+        "Do not translate into a standard vocabulary."
     )
     value: str = Field(description="The value exactly as printed, digits and all: "
                                    "'8,142', '(452)', '6.4', 'resigned'.")

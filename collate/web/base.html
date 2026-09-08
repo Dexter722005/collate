@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Collate{% endblock %}</title>
+<link rel="stylesheet" href="/static/collate.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/htmx/1.9.12/htmx.min.js"></script>
+</head>
+<body>
+
+<header class="masthead">
+  <h1>Collate</h1>
+  <span class="tagline">a critical apparatus for documents</span>
+  <nav>
+    <a href="/">Apparatus</a>
+    <a href="/quarantine">Quarantine</a>
+    <a href="/api/export">Export</a>
+  </nav>
+</header>
+
+{% block body %}{% endblock %}
+
+</body>
+</html>

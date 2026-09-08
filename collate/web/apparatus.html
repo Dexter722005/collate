@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="frame">
+
+  <!-- left rail: the corpus, and what to look at -->
+  <aside class="pane pane--left">
+    <h2 class="pane-title">Corpus</h2>
+    <dl class="stat-grid">
+      <dt>witnesses</dt><dd>{{ stats.witnesses }}</dd>
+      <dt>claims</dt><dd>{{ stats.claims }}</dd>
+      <dt>framed</dt><dd>{{ stats.framed }}</dd>
+      <dt>measures</dt><dd>{{ stats.measures }}</dd>
+      <dt>verdicts</dt><dd>{{ stats.verdicts }}</dd>
+      <dt>quarantined</dt><dd>{{ stats.quarantined }}</dd>
+    </dl>
+
+    <h3 class="sub">Verdict</h3>
+    <div class="filters">
+      {% for v in order %}
+      <a class="{% if verdict == v %}on{% endif %} v-{{ v }}" href="/?verdict={{ v }}{% if q %}&q={{ q }}{% endif %}">
+        <span>{{ v }}</span><span class="n">{{ counts.get(v, 0) }}</span>
+      </a>
+      {% endfor %}
+      <a class="{% if verdict == 'all' %}on{% endif %}" href="/?verdict=all{% if q %}&q={{ q }}{% endif %}">
+        <span>all</span><span class="n">{{ stats.verdicts }}</span>
+      </a>
+    </div>
+
+    <h3 class="sub">Rule fired</h3>
+    <div class="filters">
+      {% for r in rules %}
+      <a class="{% if rule == r.rule_id %}on{% endif %}"
+         href="/?verdict=all&rule={{ r.rule_id }}">
+        <span>{{ r.rule_id.lower().replace('_',' ') }}</span><span class="n">{{ r.c }}</span>
+      </a>
+      {% endfor %}
+    </div>
+
+    <h3 class="sub">Witnesses</h3>
+    {% for w in witnesses %}
+    <div class="witness">
+      <div class="t">{{ w.title or w.filename }}</div>
+      <div class="m">
+        <span>{{ w.publisher or '&mdash;' | safe }}</span>
+        <span>{{ w.vintage_date or 'undated' }}</span>
+      </div>
+    </div>
+    {% endfor %}
+  </aside>
+
+  <!-- centre: the apparatus entries -->
+  <main class="pane pane--centre">
+    <h2 class="pane-title">
+      Apparatus &mdash; {{ rows|length }} entr{{ 'y' if rows|length == 1 else 'ies' }}
+      {% if rule %}&middot; {{ rule.lower().replace('_',' ') }}{% endif %}
+    </h2>
+
+    <form method="get" action="/">
+      <input type="hidden" name="verdict" value="{{ verdict }}">
+      <input class="searchbox" name="q" value="{{ q }}"
+             placeholder="filter by measure or entity, e.g. revenue, GDP, Delhivery">
+    </form>
+
+    {% for r in rows %}
+    <div class="entry" hx-get="/verdict/{{ r.id }}" hx-target="#evidence" hx-swap="innerHTML"
+         onclick="document.querySelectorAll('.entry').forEach(e=>e.classList.remove('sel'));this.classList.add('sel')">
+      <div style="display:flex;align-items:baseline;gap:8px;justify-content:space-between">
+        <div class="lemma">
+          {{ r.measure or 'unnamed measure' }}
+          <span class="ent">&mdash; {{ r.entity or 'unattributed' }}</span>
+        </div>
+        <span class="rule-tag v-{{ r.verdict }}">{{ r.rule_id.replace('_',' ') }}</span>
+      </div>
+
+      <div class="readings">
+        <div class="reading">
+          <div class="val">{{ r.a_value }} {{ r.a_unit or '' }}</div>
+          <div class="src">{{ r.a_period or 'no period' }} &middot; {{ r.a_witness }}</div>
+        </div>
+        <div class="reading">
+          <div class="val">{{ r.b_value }} {{ r.b_unit or '' }}</div>
+          <div class="src">{{ r.b_period or 'no period' }} &middot; {{ r.b_witness }}</div>
+        </div>
+      </div>
+
+      {% if r.divergence is not none %}
+      <div class="gap">divergence {{ '%.2f'|format(r.divergence * 100) }}%{% if r.severity %} &middot; severity {{ '%.2f'|format(r.severity) }}{% endif %}{% if r.llm_note %} &middot; escalated{% endif %}</div>
+      {% endif %}
+    </div>
+    {% else %}
+    <p class="placeholder">Nothing under this filter.</p>
+    {% endfor %}
+  </main>
+
+  <!-- right: reasoning and evidence -->
+  <section class="pane pane--evidence" id="evidence">
+    <p class="placeholder">Select an entry to see the reasoning and the pages it came from.</p>
+  </section>
+
+</div>
+{% endblock %}
