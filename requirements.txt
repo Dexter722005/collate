@@ -1,0 +1,18 @@
+# --- core pipeline ---
+pymupdf==1.27.2.3          # parsing, table detection, page rendering for evidence view
+google-genai==1.63.0       # Gemini client (free tier)
+pydantic==2.12.5           # claim/frame schemas + structured-output contracts
+python-dateutil==2.9.0.post0
+
+# --- normalisation ---
+rapidfuzz                  # entity alias matching
+sentence-transformers      # local MiniLM embeddings for the measure registry
+
+# --- surface ---
+fastapi==0.110.1
+uvicorn==0.25.0
+jinja2==3.1.6
+python-multipart           # PDF upload
+
+# --- dev ---
+pytest==9.0.2
