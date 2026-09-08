@@ -70,6 +70,10 @@ not think of.
 
 ### 4 — The free tier shaped the architecture, and improved it · 8 Sep
 
+> Superseded by §13. The quota figures below are what Google documents; they are
+> not what the API enforces. Left in place because the reasoning still holds and
+> the correction is the more useful half of the story.
+
 Gemini's free tier meters **15 requests/minute against 1,000,000 tokens/minute**.
 Requests are the scarce resource by a factor of thousands.
 

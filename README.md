@@ -132,11 +132,26 @@ Two institutions, same period, same units, both calling it net FDI:
 `CONTRADICTS` → escalated → the model **upholds** it (`UNRESOLVED_DISCREPANCY`),
 noting the quotes carry no methodological context that would bridge a 62% gap.
 
-That is the correct answer *on the evidence shown*. The real explanation is
-almost certainly definitional — the Survey's "net FDI" nets out Indian outward
-investment, the RBI's "Net Inward FDI" does not — but neither quote says so, and
-inventing that reconciliation from outside the documents is exactly what this
-system is built not to do. `sufficient_context` exists for this.
+That is the correct answer *on the evidence shown* — and the evidence pane
+shows why it is also an incomplete one. Open the anchor and **footnote 95 is
+sitting on the same page**, three inches below the highlighted paragraph:
+
+> *Net FDI is calculated as follows: (1) FDI by foreigners: inflows + retained
+> earnings − repatriation. (2) FDI by Indians: Indian investment overseas +
+> retained earnings − repatriation. (3) The net FDI figure: (1)−(2)*
+
+So the Survey nets out Indian outward investment and the RBI's "Net Inward FDI"
+does not, and the two figures never disagreed. The reconciliation was in the
+document all along, just outside the span the claim was anchored to.
+
+I have deliberately left this as the headline example rather than tuning it
+away, because it is the sharpest statement of where the system currently stops.
+The model was not hallucinating and the rules were not wrong; the *unit of
+evidence* was too small. Footnotes and table notes govern the numbers above them
+exactly as scale headers govern the rows beneath them, and the table lane
+already solves that problem in one direction. Extending governing-context
+propagation to footnote markers is the single highest-value thing I would build
+next, and it is a segmentation change, not a model change.
 
 ### 3 · An apparent contradiction explained by context
 
@@ -301,7 +316,10 @@ argument, but it is one person's argument.
 **`identity` claims are extracted but barely exercised.** Address equivalence
 works only when both surface forms appear with enough surrounding context.
 
-**Next, in order:** the vision pass over sparse pages; a proper confidence
+**Next, in order:** footnote-and-note propagation, so a claim inherits the
+governing footnote the way a table row already inherits its scale header — the
+net-FDI case above is one anchor span away from reconciling itself; the vision
+pass over sparse pages; a proper confidence
 interval on `CONTRADICTS` severity rather than a hand-rolled score; per-lemma
 timeline view so a measure's revision history reads as a sequence rather than a
 set of pairs; and moving embeddings into `sqlite-vec` so neighbour search stops
