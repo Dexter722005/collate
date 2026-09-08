@@ -292,6 +292,41 @@ interesting* part of the pipeline, and it presented as a model-quality problem.
 And the anchoring gate never let one of those 587 sentences into the apparatus —
 its whole value is on days when something upstream is quietly broken.
 
+### 17 — A front door for uploads, and the WAL trap behind it · 8 Sep
+
+`POST /upload` existed from the start and had no button anywhere, so the only
+way to add a document was curl. The brief's own checklist says "accepts new PDFs
+through an API or UI", and a reviewer will look for a control before they look
+for an endpoint.
+
+Two things made the endpoint unusable as written even once found. Ingest is a
+few minutes of model calls, so a synchronous request either times out or looks
+hung. And the expected failure — a spent daily allowance — surfaced as a raw
+500, which makes a working system look broken.
+
+So uploads now start a background job with its own sqlite connection (sharing
+the request connection across threads is what collapsed ingest throughput to
+zero calls a minute earlier, and it is far nastier inside a web server).
+The page polls and names the stage it is in, because "extracting claims" tells a
+waiting reader something a spinner does not. Quota exhaustion gets a sentence
+saying what happened, that it resets at midnight Pacific, and that everything
+already ingested still works.
+
+The duplicate check moved ahead of client construction: negotiating a model
+costs a live request, and spending one from a 20-a-day allowance to discover we
+already have the file is a bad trade.
+
+**The trap.** The apparatus is committed to git, and SQLite in WAL mode keeps
+recent writes in a `-wal` sidecar that is gitignored. After ingesting, `git
+status` showed `collate.db` as *unmodified* — the corpus was complete locally
+and a cloner would have received a database missing everything since the last
+checkpoint. Nothing warns you; the file simply looks unchanged. `python -m
+collate checkpoint` now folds the log back in and compacts, and `build` ends
+with it.
+
+Verified the way it should be: copy `collate.db` alone to an empty directory,
+open it, count the rows.
+
 ---
 
 ## Still wrong, or not done

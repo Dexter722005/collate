@@ -36,6 +36,23 @@
       {% endfor %}
     </div>
 
+    <h3 class="sub">Add a document</h3>
+    <form class="dropzone" id="dropzone"
+          hx-post="/upload" hx-encoding="multipart/form-data"
+          hx-target="#jobs" hx-swap="afterbegin">
+      <input type="file" name="file" id="pdf" accept="application/pdf" hidden
+             onchange="this.form.requestSubmit()">
+      <label for="pdf">
+        <strong>Choose a PDF</strong>
+        <span>or drop one here</span>
+      </label>
+    </form>
+    <p class="rail-note">
+      Any PDF, any subject. Nothing is configured for these documents &mdash; the
+      vocabulary is built from whatever it reads.
+    </p>
+    <div id="jobs"></div>
+
     <h3 class="sub">Witnesses</h3>
     {% for w in witnesses %}
     <div class="witness">
@@ -98,4 +115,22 @@
   </section>
 
 </div>
+
+<script>
+// Drag-and-drop onto the rail. The file input is the real control; this just
+// gives it a bigger target.
+(function () {
+  const zone = document.getElementById('dropzone');
+  const input = document.getElementById('pdf');
+  if (!zone) return;
+  ['dragenter', 'dragover'].forEach(e =>
+    zone.addEventListener(e, ev => { ev.preventDefault(); zone.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(e =>
+    zone.addEventListener(e, ev => { ev.preventDefault(); zone.classList.remove('over'); }));
+  zone.addEventListener('drop', ev => {
+    const f = ev.dataTransfer.files;
+    if (f && f.length) { input.files = f; zone.requestSubmit(); }
+  });
+})();
+</script>
 {% endblock %}

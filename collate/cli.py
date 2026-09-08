@@ -6,6 +6,7 @@
     python -m collate adjudicate                    run the cascade
     python -m collate stats                         what is in the apparatus
     python -m collate cases                         the four required cases, found live
+    python -m collate checkpoint                    fold the WAL in before committing
     python -m collate reset                         start over
 
 build is incremental: documents already in the corpus by content hash are
@@ -109,6 +110,28 @@ def cmd_build(args, conn) -> None:
     cmd_adjudicate(args, conn)
     print()
     cmd_stats(args, conn)
+    print()
+    cmd_checkpoint(args, conn)
+
+
+def cmd_checkpoint(args, conn) -> None:
+    """Fold the write-ahead log back into collate.db and compact it.
+
+    Needed because the apparatus is committed to git. SQLite in WAL mode keeps
+    recent writes in a `-wal` sidecar that is gitignored, so a freshly ingested
+    corpus can look complete locally and arrive at a cloner missing everything
+    since the last checkpoint. Run this before committing the database.
+    """
+    import sqlite3
+
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.commit()
+    conn.close()
+    raw = sqlite3.connect(str(args.db or db.DB_PATH))
+    raw.execute("VACUUM")
+    raw.close()
+    size = Path(args.db or db.DB_PATH).stat().st_size
+    print(f"checkpointed and compacted: {size / 1e6:.1f} MB, safe to commit")
 
 
 def cmd_reset(args, conn) -> None:
@@ -140,6 +163,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("paths", nargs="+")
     p.add_argument("--no-escalate", action="store_true")
     p.set_defaults(fn=cmd_build)
+    p = sub.add_parser("checkpoint", help="fold the WAL back in before committing the db")
+    p.set_defaults(fn=cmd_checkpoint)
     p = sub.add_parser("reset"); p.add_argument("--yes", action="store_true"); p.set_defaults(fn=cmd_reset)
 
     args = parser.parse_args(argv)

@@ -15,6 +15,9 @@ __pycache__/
 venv/
 .pytest_cache/
 
+# PDFs added through the UI at runtime
+data/uploads/
+
 # collate runtime state
 *.db
 *.db-wal

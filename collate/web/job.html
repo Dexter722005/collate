@@ -1,0 +1,48 @@
+{# One ingestion job. Re-fetches itself until the work is finished.
+
+   The stage labels are not decoration: reading a 100-page document is minutes
+   of model calls, and "extracting claims" tells a waiting reader something that
+   a spinner does not. #}
+
+{% if reject %}
+  <div class="job job--bad">
+    <div class="job-head">Not accepted</div>
+    <div class="job-body">{{ reject }}</div>
+  </div>
+
+{% elif job.error %}
+  <div class="job job--bad">
+    <div class="job-head">{{ job.filename|truncate(38) }} &mdash; stopped after {{ job.elapsed }}</div>
+    <div class="job-body">{{ job.error }}</div>
+    {% if job.hint %}<div class="job-hint">{{ job.hint }}</div>{% endif %}
+  </div>
+
+{% elif job.stage == 'done' %}
+  <div class="job job--good">
+    <div class="job-head">{{ job.filename|truncate(38) }} &mdash; added in {{ job.elapsed }}</div>
+    {% if job.result and job.result.get('skipped') %}
+      <div class="job-body">{{ job.detail or 'Already in the corpus.' }}</div>
+    {% elif job.result %}
+      <dl class="stat-grid job-stats">
+        <dt>pages</dt><dd>{{ job.result.pages }}</dd>
+        <dt>claims kept</dt><dd>{{ job.result.anchored }}</dd>
+        <dt>rejected</dt><dd>{{ job.result.quarantined }}</dd>
+        <dt>anchor rate</dt><dd>{{ '%.0f%%'|format((job.result.anchor_rate or 0) * 100) }}</dd>
+        {% if job.result.collation %}
+        <dt>new comparisons</dt><dd>{{ job.result.collation.pairs }}</dd>
+        {% endif %}
+      </dl>
+      <a class="job-cta" href="/">Reload the apparatus &rarr;</a>
+    {% endif %}
+  </div>
+
+{% else %}
+  {# still working: poll again shortly #}
+  <div class="job job--busy" hx-get="/jobs/{{ job.id }}" hx-trigger="load delay:2s"
+       hx-swap="outerHTML" hx-target="this">
+    <div class="job-head">{{ job.filename|truncate(38) }}</div>
+    <div class="job-bar"><span style="width: {{ job.percent }}%"></span></div>
+    <div class="job-body">{{ job.label }}{% if job.detail %} &middot; {{ job.detail|truncate(60) }}{% endif %}</div>
+    <div class="job-hint">{{ job.elapsed }} elapsed &mdash; this takes a few minutes; you can keep reading meanwhile.</div>
+  </div>
+{% endif %}

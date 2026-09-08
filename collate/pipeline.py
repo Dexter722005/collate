@@ -15,7 +15,15 @@ from . import elicit, segment
 from .db import insert, one
 
 
-def ingest(conn, client, pdf_path: str | Path, *, force: bool = False) -> dict:
+def ingest(conn, client, pdf_path: str | Path, *, force: bool = False,
+           progress=None) -> dict:
+    """Ingest one document.
+
+    `progress(stage, detail)` is called as each stage begins, so a caller that
+    is driving a UI can say which of the slow parts is currently slow. Optional
+    and ignored by the CLI, which has stdout for the same purpose.
+    """
+    say = progress or (lambda *_a, **_k: None)
     path = Path(pdf_path)
     digest = segment.sha256_file(path)
 
@@ -23,10 +31,12 @@ def ingest(conn, client, pdf_path: str | Path, *, force: bool = False) -> dict:
     if existing and not force:
         return {"witness_id": existing["id"], "skipped": True, "reason": "already ingested"}
 
+    say("reading", f"{path.name}")
     pages = segment.read_pages(path)
     if not pages:
         raise ValueError(f"{path.name}: no readable pages")
 
+    say("front_matter", f"{len(pages)} pages parsed")
     front = {}
     try:
         front = elicit.read_front_matter(client, pages)
@@ -77,6 +87,7 @@ def ingest(conn, client, pdf_path: str | Path, *, force: bool = False) -> dict:
     conn.commit()
 
     passages = segment.build_passages(pages)
+    say("extracting", f"{len(passages)} passages to read")
     header_default = None
     if front.get("default_currency") or front.get("default_scale"):
         header_default = " ".join(

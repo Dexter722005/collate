@@ -74,7 +74,21 @@ tier enforces **20 requests per day per model**, not the 1,500 every published
 source claims (DECISIONS §13), so the client rotates across nine flash models
 and caches every call on disk — which is what makes 511 pages fit in a day.
 
-**Add your own documents** — through the UI, or:
+**Add your own documents.** Drag a PDF onto the panel in the left rail, or click
+to choose one. Ingestion runs in the background and the card reports each stage
+as it goes — reading, extracting, anchoring, framing, comparing — because a
+100-page document is a few minutes of model calls and a silent spinner is
+indistinguishable from a crash. When it finishes, reload and the new document is
+in the apparatus, compared against everything already there.
+
+Same thing for scripts:
+
+```bash
+curl -F "file=@yours.pdf" localhost:8000/upload-json   # -> {"job": "...", "poll": "/api/jobs/..."}
+curl localhost:8000/api/jobs/<id>                      # stage, percent, result
+```
+
+Or from the command line:
 
 ```bash
 python -m collate ingest path/to/anything.pdf
@@ -333,8 +347,14 @@ being a full scan.
   anyone holding a key.
 - **Nothing is hard-coded to these documents.** No filename checks, no metric
   whitelist, no document-specific branches. The measure and entity registries
-  start empty and are grown by whatever gets ingested. Point it at a lease or a
-  clinical trial and the same machinery applies.
+  start empty and are grown by whatever gets ingested.
+
+  Tested rather than asserted: uploading *this assignment's own PDF* — two
+  pages, no financial content — produced `doc_type: hiring assignment`,
+  `publisher: Superjoin`, and four claims across three of the four claim types,
+  including `demo video duration limit = 3 minutes or less` and the submission
+  form URL as an `identity` claim. Nothing rejected. That document was removed
+  again afterwards; the committed corpus is the six starter files.
 - **Page numbers.** The curated excerpts keep the page numbering printed in the
   original filings, so physical page 5 may print "26". Both are shown in the
   evidence pane.

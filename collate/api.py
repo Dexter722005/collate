@@ -24,7 +24,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import collation, db, llm, normalize, pipeline
+from . import db, jobs
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
@@ -272,21 +272,60 @@ def export():
     return JSONResponse(out)
 
 
-@app.post("/upload")
-async def upload(file: UploadFile):
-    """Add a document to the live apparatus. Ingest, frame, adjudicate, in that
-    order - and only the new claims are compared, so this stays cheap as the
-    corpus grows."""
+@app.post("/upload", response_class=HTMLResponse)
+async def upload(request: Request, file: UploadFile):
+    """Accept a PDF and start ingesting it in the background.
+
+    Returns the job card immediately rather than the finished result: reading a
+    100-page document is a couple of minutes of model calls, and a request held
+    open for that long is a request that times out.
+    """
     if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(400, "expected a .pdf")
+        return templates.TemplateResponse(
+            "job.html",
+            {"request": request, "job": None,
+             "reject": f"{file.filename or 'that file'} is not a PDF."},
+            status_code=400,
+        )
     UPLOADS.mkdir(parents=True, exist_ok=True)
-    dest = UPLOADS / file.filename
+    dest = UPLOADS / Path(file.filename).name
     with open(dest, "wb") as fh:
         shutil.copyfileobj(file.file, fh)
 
-    client = llm.Gemini(conn=conn)
-    result = pipeline.ingest(conn, client, dest)
-    if not result.get("skipped"):
-        normalize.normalize_witness(conn, result["witness_id"])
-        result["collation"] = collation.run(conn, client=client, escalate=True)
-    return JSONResponse(result)
+    job = jobs.start(dest, db_path=str(db.DB_PATH))
+    return templates.TemplateResponse("job.html", {"request": request, "job": job})
+
+
+@app.get("/jobs/{job_id}", response_class=HTMLResponse)
+def job_status(request: Request, job_id: str):
+    """Polled by the job card until the work finishes."""
+    job = jobs.get(job_id)
+    if job is None:
+        return HTMLResponse('<div class="job job--gone">That job is no longer tracked.</div>')
+    return templates.TemplateResponse("job.html", {"request": request, "job": job})
+
+
+@app.post("/upload-json")
+async def upload_json(file: UploadFile):
+    """Same thing for scripts. Returns a job id to poll at /api/jobs/{id}."""
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "expected a .pdf")
+    UPLOADS.mkdir(parents=True, exist_ok=True)
+    dest = UPLOADS / Path(file.filename).name
+    with open(dest, "wb") as fh:
+        shutil.copyfileobj(file.file, fh)
+    job = jobs.start(dest, db_path=str(db.DB_PATH))
+    return JSONResponse({"job": job.id, "poll": f"/api/jobs/{job.id}"}, status_code=202)
+
+
+@app.get("/api/jobs/{job_id}")
+def job_json(job_id: str):
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, "no such job")
+    return JSONResponse({
+        "id": job.id, "filename": job.filename, "stage": job.stage,
+        "label": job.label, "percent": job.percent, "detail": job.detail,
+        "finished": job.finished, "error": job.error, "hint": job.hint,
+        "result": job.result, "elapsed": job.elapsed,
+    })
