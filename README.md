@@ -62,12 +62,24 @@ uvicorn collate.api:app --reload
 # open http://127.0.0.1:8000
 ```
 
-**Rebuild the apparatus from the PDFs** (~15 minutes for the six starter
-documents; every model call is cached on disk, so a second run is free):
+**Rebuild the apparatus from the PDFs** (~6 minutes for the Delhivery trio;
+every model call is cached on disk, so a second run is free):
 
 ```bash
-python -m collate build data/starter-datasets
+python -m collate build data/starter-datasets/delhivery
 ```
+
+A word on scope: Gemini's free tier enforces **20 requests per day per model**,
+not the 1,500 every published source claims (DECISIONS §13). The committed
+apparatus therefore covers the three Delhivery documents, which share an entity
+across three vintages and so actually produce cross-document collisions. The
+second dataset ingests with the same command and no code changes —
+
+```bash
+python -m collate build data/starter-datasets/india-macroeconomy
+```
+
+— it simply did not fit in one day's allowance alongside the first.
 
 **Add your own documents** — through the UI, or:
 
@@ -91,6 +103,81 @@ python -m pytest -q
 ## Video Demo
 
 **→ [demo video](PASTE_LINK_HERE)** (under 3 minutes)
+
+## The four cases
+
+Run `python -m collate cases` to have the system find these itself — it queries
+the live apparatus rather than reading a fixture, so if the corpus changes the
+examples change with it. A captured run is in
+[samples/four-cases.txt](samples/four-cases.txt).
+
+Current corpus: the three Delhivery documents, 227 pages, **581 anchored claims**,
+47 quarantined, 319 measures discovered, 203 adjudicated pairs.
+
+### 1 · Corroborated across documents, expressed differently
+
+| | Annual Report FY24, p.36 | Earnings deck Q4 FY24, p.17 |
+| --- | --- | --- |
+| as printed | `₹85,942.34 million` | `8,594` under `₹ Cr` |
+| period | FY24 | FY24 |
+| normalised | **85,942,340,000 INR** | **85,940,000,000 INR** |
+
+> "Total income increased by 14.13% to ₹85,942.34 million for FY24…"
+> `Total income | 1,934 | 2,325 | 2,195 | (5.6%) | 13.5% | | 7,530 | 8,594 | 14.1%`
+
+Rule `UNIT_SCALE` → **corroborates**. The two strings share almost no
+characters; one is prose, the other a table row with nine cells. They are the
+same number.
+
+### 2 · A genuine contradiction
+
+No cross-document contradiction survives scrutiny in this corpus — which is
+itself a finding, and the tool says so rather than inventing one. What it does
+surface are within-document conflicts, the strongest being unlabelled ESOP
+grant tables where the same measure and date carry different figures. The
+escalation pass diagnoses the mechanism as `UNLABELED_TABLE_ROWS`: the table has
+no row labels tying each figure to a scheme, so the extraction is ambiguous and
+the conflict is real but attributable.
+
+### 3 · An apparent contradiction explained by context
+
+| | | |
+| --- | --- | --- |
+| Revenue from Operations, FY24 | `74,540.82 ₹ Million` | `81,415.38 ₹ Million` |
+| basis | **standalone** | **consolidated** |
+
+Rule `BASIS_MISMATCH` → **reconciled**. Same entity, same measure, same period,
+a 9.2% gap, and no disagreement at all: these are different figures by
+construction. This only works because `(Standalone)` is lifted out of the
+measure's *name* and into the frame's basis — otherwise the two are unrelated
+measures that never meet.
+
+A second flavour, `SIGN_CONVENTION`: the annual report's table writes
+`(2,491.86)` and its own prose writes `₹2,491.86 million`. Same magnitude,
+opposite sign, because one follows the accounting convention of parenthesising
+a negative. Without that rule the system reports a 200% disagreement between a
+document and itself.
+
+### 4 · A failure, measured rather than asserted
+
+**Two of them, both found by instrumentation rather than by inspection.**
+
+*Extraction.* 47 of 628 proposed claims (7.5%) failed the anchoring gate and
+were quarantined, not dropped. Separately, **24 of the earnings deck's 27 pages**
+carry almost no extractable text — the numbers live inside chart graphics.
+Nothing was extracted from them and nothing was invented for them; they are
+counted as sparse at `/quarantine`. That is why the deck contributes 35 claims
+where the annual report contributes 253.
+
+*Reasoning.* Of 11 contradictions escalated to the model, **it overruled 8** as
+not contradictions at all — different denominators, different service lines,
+managerial versus non-managerial staff, Part Truck Load versus Truck Load. Those
+are measure-registry over-merges: the embedding put two different line items in
+one lemma. The structural substitution guard (§ DECISIONS 15) removed the worst
+class of these, and the remainder are visible in the UI precisely because the
+model's note sits *beside* the rule's verdict rather than replacing it. A system
+where the LLM silently decided would have shown eight confident false
+contradictions and no way to notice.
 
 ## Architecture
 
@@ -175,7 +262,7 @@ page it allegedly came from is not a low-confidence claim, it is not a claim.
 Everything that fails is kept in `quarantine` and surfaced on its own page in
 the UI, with the rejection reasons broken out.
 
-**AI tools used.** Claude Code (Opus) for implementation throughout, pair-
+**AI tools used.** Claude Code (Opus 5) for implementation throughout, pair-
 programming style — I directed the architecture and the vocabulary, reviewed
 every file, and several of the design arguments in `DECISIONS.md` came out of
 that back-and-forth. Gemini 2.5/3.x Flash is the runtime model inside the
