@@ -171,10 +171,22 @@ def _highlights() -> list[dict]:
                JOIN claim ca ON ca.id = v.claim_a
                JOIN claim cb ON cb.id = v.claim_b
                WHERE v.rule_id = ?
-               ORDER BY (ca.witness_id <> cb.witness_id) DESC,
+               ORDER BY
+                        -- Two documents disagreeing beats one disagreeing with
+                        -- itself.
+                        (ca.witness_id <> cb.witness_id) DESC,
+                        -- A pair whose printed values look nothing alike is the
+                        -- demonstration; two documents both writing "10.1" agree
+                        -- trivially and show nothing.
+                        (COALESCE(ca.value_raw,'') <> COALESCE(cb.value_raw,'')) DESC,
                         (LOWER(COALESCE(ca.unit_raw,'')) <> LOWER(COALESCE(cb.unit_raw,''))) DESC,
-                        ABS(COALESCE(ca.value_num, 0)) DESC,
-                        COALESCE(v.severity, 0) DESC, ABS(COALESCE(v.divergence,0)) DESC
+                        -- A corroboration convinces when the figures match most
+                        -- closely, a contradiction when they diverge most. One
+                        -- column, opposite directions.
+                        CASE WHEN v.verdict = 'corroborates'
+                             THEN  ABS(COALESCE(v.divergence, 0))
+                             ELSE -ABS(COALESCE(v.divergence, 0)) END ASC,
+                        ABS(COALESCE(ca.value_num, 0)) DESC
                LIMIT 1""",
             (rule_id,),
         )

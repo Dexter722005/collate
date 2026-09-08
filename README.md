@@ -169,14 +169,18 @@ next, and it is a segmentation change, not a model change.
 
 ### 3 · An apparent contradiction explained by context
 
-| Revenue from Operations, FY24 | `74,540.82 ₹ Million` | `81,415.38 ₹ Million` |
+| Loss for the year, FY23 | `(8,123.02) ₹ Million` | `(10,077.79) ₹ Million` |
 | --- | --- | --- |
 | basis | **standalone** | **consolidated** |
 
-`BASIS_MISMATCH` → **reconciled**. Same entity, measure, period and unit; a 9.2%
-gap and no disagreement whatever. Both come from one four-column row, and this
-only works because `(Standalone)` is lifted out of the measure's *name* into the
-frame's basis — otherwise they are two unrelated measures that never meet.
+`BASIS_MISMATCH` → **reconciled**. Same entity, measure, period and unit; a 24%
+gap and no disagreement whatever — these are different figures by construction.
+`Revenue from Operations` FY24 does the same thing (`74,540.82` standalone
+against `81,415.38` consolidated).
+
+This only works because `(Standalone)` is lifted out of the measure's *name*
+into the frame's basis — otherwise the two are unrelated measures that never
+meet, and the reconciliation is never even attempted.
 
 Two more flavours the cascade produces on this corpus: `SIGN_CONVENTION` (the
 annual report's table writes `(2,491.86)` where its own prose writes
