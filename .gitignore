@@ -18,6 +18,9 @@ venv/
 # PDFs added through the UI at runtime
 data/uploads/
 
+# the narration script, superseded by the captioned recording it describes
+Collate-video-script.pdf
+
 # intermediate recording; the mp4 beside it is committed
 demo/*.webm
 

@@ -109,7 +109,7 @@ python -m pytest -q
 
 ## Video Demo
 
-**→ [demo video](PASTE_LINK_HERE)** · also in this repo at
+**→ [demo video](https://youtu.be/CpCDFduyIZ8)** · also in this repo at
 [`demo/collate-demo.mp4`](demo/collate-demo.mp4) (2:13)
 
 The take is scripted rather than screen-captured — see
