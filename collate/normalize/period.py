@@ -21,6 +21,7 @@ Conventions implemented, all Indian-fiscal (April to March):
     2024-25               -> spanning form, same as FY2024-25
     Q4 FY24               -> Jan-Mar 2024 (Q1 is Apr-Jun)
     H1 FY24, 9M FY24      -> Apr-Sep 2023, Apr-Dec 2023
+    first eight months of FY25 -> Apr-Nov 2024, and NOT the whole year
     CY2024                -> calendar [2024-01-01, 2025-01-01)
     year ended 31 Mar 24  -> resolved to the fiscal year it closes
     as at 31 March 2024   -> an instant, not a span
