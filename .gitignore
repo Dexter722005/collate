@@ -16,6 +16,9 @@ venv/
 *.db
 *.db-wal
 *.db-shm
+# ...except the built apparatus, which is committed so the UI and the demo run
+# without an API key. Rebuild it with: python -m collate build <dir>
+!collate.db
 .cache/llm/
 .cache/render/
 
